@@ -1,5 +1,6 @@
 appId: dev.underleaf.app
 productName: Underleaf
+copyright: Copyright © 2026 Monty
 directories:
   buildResources: build
   output: dist
@@ -7,15 +8,33 @@ files:
   - out/**/*
   - package.json
 extraResources:
+  # underleaf-spell and texlab, both already universal (Intel + Apple Silicon) binaries.
   - from: resources/bin
     to: bin
     filter: ['**/*']
+  - from: LICENSE
+    to: LICENSE
+  - from: THIRD_PARTY_NOTICES.md
+    to: THIRD_PARTY_NOTICES.md
+  - from: licenses
+    to: licenses
 mac:
   category: public.app-category.productivity
-  target: dir
-  identity: null
+  target:
+    - target: dmg
+      arch: universal
+  minimumSystemVersion: '11.0'
+  # Ad-hoc signature: required to run on Apple Silicon, free, but not trusted by Gatekeeper
+  # (users approve the app once). Replace with a Developer ID to sign and notarize properly.
+  identity: '-'
+  hardenedRuntime: false
+  gatekeeperAssess: false
+  x64ArchFiles: 'Contents/Resources/bin/*'
   extendInfo:
     CFBundleDocumentTypes:
       - CFBundleTypeName: Folder
         CFBundleTypeRole: Editor
         LSItemContentTypes: [public.folder]
+dmg:
+  title: Underleaf ${version}
+  artifactName: Underleaf-${version}.dmg

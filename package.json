@@ -1,18 +1,19 @@
 {
   "name": "underleaf",
   "productName": "Underleaf",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "A local, Overleaf-style LaTeX editor for macOS",
   "main": "./out/main/index.js",
   "private": true,
   "scripts": {
-    "dev": "npm run native && electron-vite dev",
     "build": "npm run native && electron-vite build",
-    "start": "npm run build && electron-vite preview",
-    "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
-    "test": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test test/*.test.mts",
+    "dev": "npm run native && electron-vite dev",
+    "dist": "npm run build && electron-builder --mac --publish never",
+    "native": "sh scripts/build-native.sh && sh scripts/fetch-texlab.sh",
     "package": "npm run build && electron-builder --mac dir",
-    "native": "sh scripts/build-native.sh"
+    "start": "npm run build && electron-vite preview",
+    "test": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test test/*.test.mts",
+    "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json"
   },
   "devDependencies": {
     "@codemirror/autocomplete": "^6.20.4",
@@ -42,5 +43,10 @@
     "electron@45.0.0": true,
     "fsevents@2.3.3": true
   },
-  "author": "Monty"
+  "author": "Monty",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Montys-spec/underleaf.git"
+  }
 }

@@ -1,0 +1,56 @@
+name: Release
+
+# Push a tag like v0.2.0 to build the universal DMG and publish a GitHub Release.
+# Running it by hand from the Actions tab builds the DMG as a downloadable artifact only.
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  mac:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Check that the tag matches package.json
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          version="$(node -p "require('./package.json').version")"
+          if [ "v$version" != "$GITHUB_REF_NAME" ]; then
+            echo "Tag $GITHUB_REF_NAME does not match package.json version $version" >&2
+            exit 1
+          fi
+
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+      - name: Build universal DMG
+        run: npm run dist
+
+      - name: Verify the app
+        run: |
+          app="$(ls -d dist/mac-universal/Underleaf.app)"
+          lipo -archs "$app/Contents/MacOS/Underleaf"
+          lipo -archs "$app/Contents/Resources/bin/texlab"
+          lipo -archs "$app/Contents/Resources/bin/underleaf-spell"
+          codesign --verify --deep --strict "$app"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Underleaf-dmg
+          path: dist/*.dmg
+          if-no-files-found: error
+
+      - name: Publish GitHub Release
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" dist/*.dmg --title "Underleaf ${GITHUB_REF_NAME#v}" --notes-file .github/release-notes.md
