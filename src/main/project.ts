@@ -150,26 +150,3 @@ function collectTex(nodes: FileNode[], out: string[] = []): string[] {
   }
   return out
 }
-
-export const BLANK_DOCUMENT = `\\documentclass[11pt]{article}
-\\usepackage[utf8]{inputenc}
-\\usepackage[T1]{fontenc}
-\\usepackage{amsmath, amssymb}
-\\usepackage{graphicx}
-\\usepackage[margin=2.5cm]{geometry}
-\\usepackage{hyperref}
-
-\\title{Untitled Document}
-\\author{}
-\\date{\\today}
-
-\\begin{document}
-
-\\maketitle
-
-\\section{Introduction}
-
-Start writing here.
-
-\\end{document}
-`

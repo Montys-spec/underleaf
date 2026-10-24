@@ -37,6 +37,17 @@ export const ErrorIcon = icon(<><circle cx="12" cy="12" r="9" /><path d="M12 7v6
 export const WarningIcon = icon(<><path d="M12 3 2 20h20z" /><path d="M12 10v4M12 17v.5" /></>)
 export const InfoIcon = icon(<><circle cx="12" cy="12" r="9" /><path d="M12 11v6M12 7.5v.5" /></>)
 export const StarIcon = icon(<path d="m12 3 2.7 5.6 6.1.9-4.4 4.3 1 6.1L12 17l-5.4 2.9 1-6.1L3.2 9.5l6.1-.9z" />)
+export const SearchIcon = icon(<><circle cx="11" cy="11" r="7" /><path d="m20 20-4-4" /></>)
+export const GitIcon = icon(<><circle cx="6" cy="5" r="2.2" /><circle cx="6" cy="19" r="2.2" /><circle cx="18" cy="8" r="2.2" /><path d="M6 7.2v9.6M18 10.2c0 4-6 3-11 6.5" /></>)
+export const FilesIcon = icon(<><path d="M15 3H8a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h9a2 2 0 0 0 2-2V7z" /><path d="M15 3v4h4" /><path d="M3 8v11a2 2 0 0 0 2 2h9" /></>)
+export const OutlineIcon = icon(<><path d="M4 6h16M8 12h12M12 18h8" /></>)
+export const ArrowLeftIcon = icon(<path d="M19 12H5M11 6l-6 6 6 6" />)
+export const ArrowRightIcon = icon(<path d="M5 12h14M13 6l6 6-6 6" />)
+export const TextIcon = icon(<><path d="M4 7V5h16v2M12 5v14M9 19h6" /></>)
+export const RefreshIcon = icon(<><path d="M20 11a8 8 0 1 0-2.3 5.7" /><path d="M20 5v6h-6" /></>)
+export const UpIcon = icon(<path d="M12 19V5M6 11l6-6 6 6" />)
+export const DownIcon = icon(<path d="M12 5v14M6 13l6 6 6-6" />)
+export const CheckIcon = icon(<path d="m5 12 5 5 9-10" />)
 export const LeafIcon = icon(<><path d="M5 19c0-8 5-14 15-15-1 10-7 15-15 15z" /><path d="M5 19 13 11" /></>)
 
 export function fileIconFor(name: string): (p: IconProps) => ReactElement {

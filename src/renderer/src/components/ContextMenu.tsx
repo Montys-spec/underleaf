@@ -4,6 +4,7 @@ export interface MenuItem {
   label: string
   onSelect: () => void
   danger?: boolean
+  disabled?: boolean
   separatorBefore?: boolean
 }
 
@@ -43,12 +44,13 @@ export function ContextMenu({ req, onClose }: { req: MenuRequest; onClose: () =>
 
   return (
     <div ref={ref} className="context-menu" style={{ left: pos.x, top: pos.y }} role="menu">
-      {req.items.map((item) => (
-        <div key={item.label}>
+      {req.items.map((item, i) => (
+        <div key={i}>
           {item.separatorBefore && <div className="menu-sep" />}
           <button
             role="menuitem"
             className={`menu-item${item.danger ? ' danger' : ''}`}
+            disabled={item.disabled}
             onClick={() => {
               onClose()
               item.onSelect()

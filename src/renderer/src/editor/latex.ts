@@ -1,4 +1,4 @@
-import { autocompletion, closeBrackets, closeBracketsKeymap, completionKeymap, type CompletionContext, type CompletionResult } from '@codemirror/autocomplete'
+import { autocompletion, closeBrackets, closeBracketsKeymap, completionKeymap, type CompletionSource } from '@codemirror/autocomplete'
 import { defaultKeymap, history, historyKeymap, indentWithTab, toggleComment } from '@codemirror/commands'
 import { bracketMatching, foldGutter, foldKeymap, HighlightStyle, indentOnInput, StreamLanguage, syntaxHighlighting } from '@codemirror/language'
 import { stex } from '@codemirror/legacy-modes/mode/stex'
@@ -19,18 +19,20 @@ import {
   type Command
 } from '@codemirror/view'
 import { tags as t } from '@lezer/highlight'
+import { spellChecker, type LanguageGetter } from './spell'
 
-const latexLanguage = StreamLanguage.define(stex)
+export const latexLanguage = StreamLanguage.define(stex)
 
+// Colours come from CSS variables so light and dark themes share one definition.
 const latexHighlight = HighlightStyle.define([
-  { tag: t.tagName, color: '#1b5fb4' },
-  { tag: t.keyword, color: '#8a2b9a' },
-  { tag: t.atom, color: '#0f7a52' },
-  { tag: t.special(t.variableName), color: '#b8560b' },
-  { tag: t.number, color: '#b8560b' },
-  { tag: t.bracket, color: '#5f6b7a' },
-  { tag: t.comment, color: '#7c8a7f', fontStyle: 'italic' },
-  { tag: t.invalid, color: '#c62828' }
+  { tag: t.tagName, color: 'var(--hl-command)' },
+  { tag: t.keyword, color: 'var(--hl-keyword)' },
+  { tag: t.atom, color: 'var(--hl-argument)' },
+  { tag: t.special(t.variableName), color: 'var(--hl-math)' },
+  { tag: t.number, color: 'var(--hl-math)' },
+  { tag: t.bracket, color: 'var(--hl-bracket)' },
+  { tag: t.comment, color: 'var(--hl-comment)', fontStyle: 'italic' },
+  { tag: t.invalid, color: 'var(--error)' }
 ])
 
 /** Wraps the selection in `\cmd{...}`, or inserts an empty one at the cursor. */
@@ -51,70 +53,43 @@ function wrapWith(cmd: string): Command {
   }
 }
 
-const COMMANDS = [
-  'section{}', 'subsection{}', 'subsubsection{}', 'paragraph{}', 'chapter{}', 'part{}',
-  'textbf{}', 'textit{}', 'emph{}', 'underline{}', 'texttt{}', 'textsc{}', 'footnote{}',
-  'label{}', 'ref{}', 'eqref{}', 'pageref{}', 'cite{}', 'citep{}', 'citet{}', 'url{}', 'href{}{}',
-  'includegraphics[width=\\linewidth]{}', 'input{}', 'include{}', 'usepackage{}', 'documentclass{}',
-  'title{}', 'author{}', 'date{}', 'maketitle', 'tableofcontents', 'newpage', 'clearpage', 'centering',
-  'caption{}', 'item', 'frac{}{}', 'sqrt{}', 'sum', 'int', 'infty', 'alpha', 'beta', 'gamma', 'delta',
-  'epsilon', 'lambda', 'mu', 'pi', 'sigma', 'theta', 'omega', 'mathbb{}', 'mathcal{}', 'mathrm{}',
-  'left(', 'right)', 'cdot', 'times', 'leq', 'geq', 'neq', 'approx', 'quad', 'qquad', 'hline',
-  'bibliography{}', 'bibliographystyle{}', 'printbibliography', 'addbibresource{}', 'newcommand{}{}',
-  'vspace{}', 'hspace{}', 'noindent', 'today', 'LaTeX', 'TeX'
-]
-const ENVIRONMENTS = [
-  'itemize', 'enumerate', 'description', 'figure', 'table', 'tabular', 'equation', 'equation*',
-  'align', 'align*', 'gather', 'multline', 'center', 'abstract', 'quote', 'verbatim', 'minipage',
-  'theorem', 'lemma', 'proof', 'document', 'frame', 'thebibliography'
-]
-
-function latexCompletions(ctx: CompletionContext): CompletionResult | null {
-  const word = ctx.matchBefore(/\\[A-Za-z]*/)
-  if (!word || (word.from === word.to && !ctx.explicit)) return null
-  const commands = COMMANDS.map((c) => {
-    const name = c.replace(/[[{(].*$/, '')
-    return {
-      label: '\\' + name,
-      detail: c.slice(name.length) || undefined,
-      type: 'keyword',
-      apply: (view: EditorView, _c: unknown, from: number, to: number) => {
-        const insert = '\\' + c
-        const brace = insert.search(/\{\}|\(\)/)
-        const cursor = from + (brace >= 0 ? brace + 1 : insert.length)
-        view.dispatch({ changes: { from, to, insert }, selection: { anchor: cursor } })
-      }
-    }
-  })
-  const envs = ENVIRONMENTS.map((env) => ({
-    label: '\\begin{' + env + '}',
-    type: 'class',
-    apply: (view: EditorView, _c: unknown, from: number, to: number) => {
-      const line = view.state.doc.lineAt(from)
-      const indent = /^\s*/.exec(line.text)![0]
-      const body = env === 'itemize' || env === 'enumerate' ? '\\item ' : ''
-      const insert = `\\begin{${env}}\n${indent}  ${body}\n${indent}\\end{${env}}`
-      const cursor = from + `\\begin{${env}}\n${indent}  ${body}`.length
-      view.dispatch({ changes: { from, to, insert }, selection: { anchor: cursor } })
-    }
-  }))
-  return { from: word.from, options: [...envs, ...commands], validFor: /^\\[A-Za-z]*$/ }
-}
-
 const editorTheme = EditorView.theme({
-  '&': { height: '100%', fontSize: '13.5px' },
+  '&': { height: '100%', fontSize: 'var(--editor-font-size, 13.5px)', backgroundColor: 'var(--bg)', color: 'var(--text)' },
   '.cm-scroller': { fontFamily: "'SF Mono', Menlo, Monaco, monospace", lineHeight: '1.6' },
-  '.cm-content': { padding: '8px 0' },
-  '.cm-gutters': { background: '#f6f7f9', borderRight: '1px solid #e3e6ea', color: '#9aa3ad' },
-  '.cm-activeLineGutter': { background: '#e8ecf1' },
-  '.cm-activeLine': { background: 'rgba(30, 80, 160, 0.045)' },
-  '&.cm-focused .cm-selectionBackground, .cm-selectionBackground, ::selection': { background: '#cfe0f7 !important' },
-  '.cm-lintRange-error': { backgroundImage: 'none', textDecoration: 'underline wavy #d93025', textUnderlineOffset: '3px' },
-  '.cm-lintRange-warning': { backgroundImage: 'none', textDecoration: 'underline wavy #e2a400', textUnderlineOffset: '3px' },
-  '.cm-flash-line': { background: 'rgba(255, 213, 79, 0.45)', transition: 'background 1s' }
+  '.cm-content': { padding: '8px 0', caretColor: 'var(--text)' },
+  '.cm-cursor, .cm-dropCursor': { borderLeftColor: 'var(--text)' },
+  '.cm-gutters': { background: 'var(--bg-subtle)', borderRight: '1px solid var(--border)', color: 'var(--text-faint)' },
+  '.cm-activeLineGutter': { background: 'var(--bg-sunken)' },
+  '.cm-activeLine': { background: 'var(--active-line)' },
+  '&.cm-focused .cm-selectionBackground, .cm-selectionBackground, .cm-content ::selection': { background: 'var(--select-strong) !important' },
+  '.cm-selectionMatch': { background: 'var(--selection-match)' },
+  '.cm-matchingBracket': { background: 'var(--selection-match)', outline: '1px solid var(--border-strong)' },
+  '.cm-searchMatch': { background: 'var(--search-match)', outline: '1px solid var(--warning)' },
+  '.cm-searchMatch.cm-searchMatch-selected': { background: 'var(--search-match-strong)' },
+  '.cm-panels': { background: 'var(--bg-subtle)', color: 'var(--text)' },
+  '.cm-panels.cm-panels-bottom': { borderTop: '1px solid var(--border)' },
+  '.cm-tooltip': { background: 'var(--bg)', border: '1px solid var(--border)', color: 'var(--text)', borderRadius: '6px' },
+  '.cm-tooltip-autocomplete > ul > li[aria-selected]': { background: 'var(--select-strong)', color: 'var(--text)' },
+  '.cm-completionDetail': { color: 'var(--text-muted)', fontStyle: 'normal', marginLeft: '1em' },
+  '.cm-foldPlaceholder': { background: 'var(--bg-sunken)', border: '1px solid var(--border)', color: 'var(--text-muted)' },
+  '.cm-lintRange-error': { backgroundImage: 'none', textDecoration: 'underline wavy var(--error)', textUnderlineOffset: '3px' },
+  '.cm-lintRange-warning': { backgroundImage: 'none', textDecoration: 'underline wavy var(--warning)', textUnderlineOffset: '3px' },
+  '.cm-lintRange-info': { backgroundImage: 'none', textDecoration: 'underline dotted var(--info)', textUnderlineOffset: '3px' },
+  '.cm-misspelled': { textDecoration: 'underline wavy var(--spelling)', textDecorationSkipInk: 'none', textUnderlineOffset: '3px' },
+  '.cm-flash-line': { background: 'var(--flash) !important', transition: 'background 1s' }
 })
 
-export function latexExtensions(onSave: () => void, onCompile: () => void): Extension[] {
+export interface EditorHooks {
+  onSave: () => void
+  onCompile: () => void
+  onSyncToPdf: () => void
+  /** Completion sources, read on every request so they can change at runtime (texlab on/off). */
+  completionSources: () => CompletionSource[]
+  spellEnabled: () => boolean
+  spellLanguage: LanguageGetter
+}
+
+export function baseExtensions(hooks: EditorHooks, latex: boolean): Extension[] {
   return [
     lineNumbers(),
     highlightActiveLineGutter(),
@@ -127,18 +102,32 @@ export function latexExtensions(onSave: () => void, onCompile: () => void): Exte
     indentOnInput(),
     bracketMatching(),
     closeBrackets(),
-    autocompletion({ override: [latexCompletions], icons: false }),
+    autocompletion({
+      override: [(ctx) => {
+        // Ask every source and merge, so texlab results and snippets appear together.
+        const results = hooks.completionSources().map((s) => s(ctx))
+        return Promise.all(results).then((rs) => {
+          const valid = rs.filter((r): r is NonNullable<typeof r> => !!r)
+          if (!valid.length) return null
+          const from = Math.min(...valid.map((r) => r.from))
+          return { from, options: valid.flatMap((r) => (r.from === from ? r.options : [])) }
+        })
+      }],
+      icons: false,
+      activateOnTypingDelay: 50
+    }),
     rectangularSelection(),
     crosshairCursor(),
     highlightActiveLine(),
     highlightSelectionMatches(),
     EditorView.lineWrapping,
-    latexLanguage,
+    ...(latex ? [latexLanguage, spellChecker(hooks.spellEnabled, hooks.spellLanguage)] : []),
     syntaxHighlighting(latexHighlight),
     editorTheme,
     keymap.of([
-      { key: 'Mod-s', run: () => (onSave(), true) },
-      { key: 'Mod-Enter', run: () => (onCompile(), true) },
+      { key: 'Mod-s', run: () => (hooks.onSave(), true) },
+      { key: 'Mod-Enter', run: () => (hooks.onCompile(), true) },
+      { key: 'Mod-j', run: () => (hooks.onSyncToPdf(), true) },
       { key: 'Mod-b', run: wrapWith('textbf') },
       { key: 'Mod-i', run: wrapWith('textit') },
       { key: 'Mod-/', run: toggleComment },
@@ -151,9 +140,4 @@ export function latexExtensions(onSave: () => void, onCompile: () => void): Exte
       indentWithTab
     ])
   ]
-}
-
-/** Extensions for non-LaTeX text files (.bib, .cls, .txt, ...). */
-export function plainExtensions(onSave: () => void, onCompile: () => void): Extension[] {
-  return latexExtensions(onSave, onCompile).filter((e) => e !== latexLanguage)
 }

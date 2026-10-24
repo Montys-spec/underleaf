@@ -52,12 +52,123 @@ export interface CompileResult {
   durationMs: number
 }
 
+export interface SyncTexBox {
+  page: number
+  /** Box position and size in PDF points, origin at the page's top-left; v is the baseline. */
+  h: number
+  v: number
+  W: number
+  H: number
+}
+
+export interface SyncTexSource {
+  /** Project-relative path. */
+  file: string
+  line: number
+  column?: number
+}
+
+export interface WordCount {
+  words: number
+  headers: number
+  captions: number
+  mathInline: number
+  mathDisplay: number
+  files: { file: string; words: number }[]
+}
+
+export interface SearchOptions {
+  query: string
+  regex: boolean
+  caseSensitive: boolean
+  wholeWord: boolean
+}
+
+export interface SearchMatch {
+  line: number
+  /** 0-based column of the match within the line. */
+  column: number
+  length: number
+  /** The (possibly trimmed) line text, and where it starts within the original line. */
+  preview: string
+  previewOffset: number
+}
+
+export interface SearchFileResult {
+  file: string
+  matches: SearchMatch[]
+}
+
+export interface GitChange {
+  path: string
+  /** Two-letter porcelain status, e.g. ' M', '??', 'A '. */
+  status: string
+}
+
+export interface GitCommit {
+  hash: string
+  subject: string
+  author: string
+  date: number
+}
+
+export interface GitStatus {
+  available: boolean
+  isRepo: boolean
+  branch?: string
+  changes: GitChange[]
+  commits: GitCommit[]
+  hasRemote: boolean
+  ahead: number
+  behind: number
+}
+
+export interface LabelSymbol {
+  name: string
+  file: string
+  line: number
+}
+
+export interface CitationSymbol {
+  key: string
+  type: string
+  title?: string
+  author?: string
+  year?: string
+}
+
+export interface ProjectSymbols {
+  labels: LabelSymbol[]
+  citations: CitationSymbol[]
+  files: string[]
+}
+
+export interface TemplateInfo {
+  id: string
+  name: string
+  description: string
+}
+
+export interface LspStatus {
+  available: boolean
+  version?: string
+  error?: string
+}
+
+export interface LspOptions {
+  /** Run chktex style checks when files are opened and saved. */
+  chktex: boolean
+}
+
+export type ThemePreference = 'system' | 'light' | 'dark'
+
 export type FsChangeEvent = { kind: 'tree' } | { kind: 'file'; path: string }
 
 export interface UnderleafApi {
   getRecentProjects(): Promise<RecentProject[]>
   openProjectDialog(): Promise<ProjectInfo | null>
-  newProjectDialog(): Promise<ProjectInfo | null>
+  newProjectDialog(templateId?: string): Promise<ProjectInfo | null>
+  listTemplates(): Promise<TemplateInfo[]>
   openProject(root: string): Promise<ProjectInfo>
   getInitialProject(): Promise<ProjectInfo | null>
   closeProject(): Promise<void>
@@ -78,8 +189,37 @@ export interface UnderleafApi {
   saveSettings(settings: ProjectSettings): Promise<ProjectSettings>
   compile(): Promise<CompileResult>
   stopCompile(): Promise<void>
+  /** Deletes the build folder so the next compile starts from scratch. */
+  clearCache(): Promise<void>
   readPdf(): Promise<Uint8Array | null>
   openPdfExternally(): Promise<void>
+  exportPdf(): Promise<string | null>
+  syncForward(file: string, line: number, column: number): Promise<SyncTexBox[]>
+  syncInverse(page: number, x: number, y: number): Promise<SyncTexSource | null>
+
+  wordCount(): Promise<WordCount>
+  search(opts: SearchOptions): Promise<SearchFileResult[]>
+  replaceAll(opts: SearchOptions, replacement: string): Promise<{ files: string[]; replacements: number }>
+  getSymbols(): Promise<ProjectSymbols>
+
+  gitStatus(): Promise<GitStatus>
+  gitInit(): Promise<void>
+  gitCommit(message: string): Promise<void>
+  gitDiff(path: string): Promise<string>
+  gitPush(): Promise<string>
+  gitPull(): Promise<string>
+
+  lspStart(opts: LspOptions): Promise<LspStatus>
+  lspSend(message: string): void
+  onLspMessage(cb: (message: string) => void): () => void
+
+  /** Spelling through macOS's spell checker; `lang` null means the system's default language. */
+  spellCheck(words: string[], lang: string | null): Promise<string[]>
+  spellSuggest(word: string, lang: string | null): Promise<string[]>
+  spellLearn(word: string): Promise<void>
+  spellDetect(text: string): Promise<string | null>
+  spellLanguages(): Promise<string[]>
+  setTheme(theme: ThemePreference): void
 
   onFsChange(cb: (e: FsChangeEvent) => void): () => void
   onMenu(cb: (command: MenuCommand) => void): () => void
@@ -98,3 +238,9 @@ export type MenuCommand =
   | 'zoom-out'
   | 'zoom-fit'
   | 'reload-project'
+  | 'word-count'
+  | 'search'
+  | 'export-pdf'
+  | 'sync-to-pdf'
+  | 'toggle-outline'
+  | 'git'

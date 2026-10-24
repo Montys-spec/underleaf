@@ -1,8 +1,10 @@
 import { setDiagnostics, type Diagnostic } from '@codemirror/lint'
-import { EditorState, StateEffect, StateField, type Extension } from '@codemirror/state'
+import { Compartment, EditorState, StateEffect, StateField, type Extension, type TransactionSpec } from '@codemirror/state'
 import { Decoration, EditorView, type DecorationSet } from '@codemirror/view'
 import type { LogEntry } from '@shared/types'
-import { latexExtensions, plainExtensions } from './latex'
+import type { LspDiagnostic } from '../lsp/texlab'
+import { baseExtensions, type EditorHooks } from './latex'
+import { refreshSpelling } from './spell'
 
 interface Doc {
   state: EditorState
@@ -26,6 +28,14 @@ const flashField = StateField.define<DecorationSet>({
 })
 
 const LATEX_EXT = /\.(tex|sty|cls|ltx|dtx|bbx|cbx|tikz)$/i
+/** Each document holds its language-server connection in this compartment, so it can be attached later. */
+const lspCompartment = new Compartment()
+
+export interface ManagerCallbacks extends EditorHooks {
+  onChange: (path: string, dirty: boolean) => void
+  onCursor: (path: string, line: number) => void
+  onContextMenu: (pos: number, x: number, y: number) => void
+}
 
 /**
  * Owns the single CodeMirror view and one EditorState per open file, so that
@@ -37,24 +47,36 @@ export class EditorManager {
   private active: string | null = null
   private latexExt: Extension[]
   private plainExt: Extension[]
+  private compileEntries: LogEntry[] = []
+  private lspDiagnostics = new Map<string, LspDiagnostic[]>()
+  private lspFor: (path: string) => Extension = () => []
 
-  constructor(
-    private callbacks: {
-      onChange: (path: string, dirty: boolean) => void
-      onSave: () => void
-      onCompile: () => void
-    }
-  ) {
-    const update = EditorView.updateListener.of((u) => {
-      if (u.docChanged && this.active) {
+  constructor(private callbacks: ManagerCallbacks) {
+    const listener = EditorView.updateListener.of((u) => {
+      if (!this.active) return
+      if (u.docChanged) {
         const doc = this.docs.get(this.active)!
         this.callbacks.onChange(this.active, u.state.doc.toString() !== doc.saved)
       }
+      if (u.docChanged || u.selectionSet) {
+        this.callbacks.onCursor(this.active, u.state.doc.lineAt(u.state.selection.main.head).number)
+      }
     })
-    const save = () => this.callbacks.onSave()
-    const compile = () => this.callbacks.onCompile()
-    this.latexExt = [...latexExtensions(save, compile), flashField, update]
-    this.plainExt = [...plainExtensions(save, compile), flashField, update]
+    const contextMenu = EditorView.domEventHandlers({
+      contextmenu: (e, view) => {
+        const pos = view.posAtCoords({ x: e.clientX, y: e.clientY })
+        if (pos === null) return false
+        e.preventDefault()
+        // Right-clicking outside the selection moves the cursor there, as in other editors.
+        const sel = view.state.selection.main
+        if (pos < sel.from || pos > sel.to) view.dispatch({ selection: { anchor: pos } })
+        this.callbacks.onContextMenu(pos, e.clientX, e.clientY)
+        return true
+      }
+    })
+    const common = [flashField, listener, contextMenu, lspCompartment.of([])]
+    this.latexExt = [...baseExtensions(callbacks, true), ...common]
+    this.plainExt = [...baseExtensions(callbacks, false), ...common]
     this.view = new EditorView({ state: EditorState.create({ doc: '', extensions: this.latexExt }) })
   }
 
@@ -66,10 +88,17 @@ export class EditorManager {
     return this.docs.has(path)
   }
 
+  paths(): string[] {
+    return [...this.docs.keys()]
+  }
+
   open(path: string, content: string): void {
     if (!this.docs.has(path)) {
       const extensions = LATEX_EXT.test(path) ? this.latexExt : this.plainExt
-      this.docs.set(path, { state: EditorState.create({ doc: content, extensions }), saved: content, scrollTop: 0 })
+      let state = EditorState.create({ doc: content, extensions })
+      state = state.update({ effects: lspCompartment.reconfigure(this.lspFor(path)) }).state
+      this.docs.set(path, { state, saved: content, scrollTop: 0 })
+      this.refreshDiagnostics(path)
     }
     this.activate(path)
   }
@@ -81,6 +110,7 @@ export class EditorManager {
     if (!doc) return
     this.active = path
     this.view.setState(doc.state)
+    this.callbacks.onCursor(path, doc.state.doc.lineAt(doc.state.selection.main.head).number)
     requestAnimationFrame(() => {
       this.view.scrollDOM.scrollTop = doc.scrollTop
       this.view.focus()
@@ -95,6 +125,8 @@ export class EditorManager {
 
   close(path: string): void {
     if (this.active === path) {
+      // Swap in an empty state so the closed file's language-server plugin shuts down.
+      this.view.setState(EditorState.create({ doc: '' }))
       this.active = null
     }
     this.docs.delete(path)
@@ -105,8 +137,13 @@ export class EditorManager {
     if (!doc) return
     this.stash()
     this.docs.delete(from)
+    // The language server knows files by path, so reconnect under the new name.
+    doc.state = doc.state.update({ effects: lspCompartment.reconfigure(this.lspFor(to)) }).state
     this.docs.set(to, doc)
-    if (this.active === from) this.active = to
+    if (this.active === from) {
+      this.active = to
+      this.view.setState(doc.state)
+    }
   }
 
   content(path: string): string | undefined {
@@ -134,42 +171,77 @@ export class EditorManager {
     if (!doc || this.isDirty(path)) return false
     if (this.content(path) === content) return true
     doc.saved = content
-    const state = path === this.active ? this.view.state : doc.state
-    const head = Math.min(state.selection.main.head, content.length)
-    const tr = state.update({ changes: { from: 0, to: state.doc.length, insert: content }, selection: { anchor: head } })
-    if (path === this.active) this.view.dispatch(tr)
-    else doc.state = tr.state
+    this.update(path, (state) => {
+      const head = Math.min(state.selection.main.head, content.length)
+      return { changes: { from: 0, to: state.doc.length, insert: content }, selection: { anchor: head } }
+    })
     return true
   }
 
-  /** Shows compile errors and warnings as underlines and gutter markers in every open file. */
-  applyDiagnostics(entries: LogEntry[]): void {
-    for (const [path, doc] of this.docs) {
-      const state = path === this.active ? this.view.state : doc.state
-      const diagnostics = toDiagnostics(state, entries.filter((e) => e.file === path))
-      const spec = setDiagnostics(state, diagnostics)
-      if (path === this.active) this.view.dispatch(spec)
-      else doc.state = state.update(spec).state
+  /** Connects documents to the language server (or disconnects them when given null). */
+  setLanguageServer(extensionFor: ((path: string) => Extension) | null): void {
+    this.lspFor = extensionFor ?? (() => [])
+    for (const path of this.docs.keys()) {
+      this.update(path, () => ({ effects: lspCompartment.reconfigure(this.lspFor(path)) }))
     }
   }
 
-  diagnosticsFor(path: string, entries: LogEntry[]): void {
-    if (path !== this.active) return
-    this.view.dispatch(setDiagnostics(this.view.state, toDiagnostics(this.view.state, entries.filter((e) => e.file === path))))
+  /** Shows compile errors and warnings as underlines and gutter markers in every open file. */
+  applyCompileDiagnostics(entries: LogEntry[]): void {
+    this.compileEntries = entries
+    for (const path of this.docs.keys()) this.refreshDiagnostics(path)
   }
 
-  goToLine(line: number): void {
+  applyLspDiagnostics(path: string, diagnostics: LspDiagnostic[]): void {
+    this.lspDiagnostics.set(path, diagnostics)
+    if (this.docs.has(path)) this.refreshDiagnostics(path)
+  }
+
+  refreshSpelling(): void {
+    this.view.dispatch({ effects: refreshSpelling.of(null) })
+  }
+
+  /** Current cursor position as 1-based line and column, for SyncTeX. */
+  cursor(): { line: number; column: number } | null {
+    if (!this.active) return null
+    const head = this.view.state.selection.main.head
+    const line = this.view.state.doc.lineAt(head)
+    return { line: line.number, column: head - line.from + 1 }
+  }
+
+  goToLine(line: number, column?: number, length = 0): void {
     // Runs after activate() has restored the tab's scroll position in its own frame.
     requestAnimationFrame(() => {
       const doc = this.view.state.doc
       const l = doc.line(Math.max(1, Math.min(line, doc.lines)))
+      const anchor = column !== undefined ? Math.min(l.from + column, l.to) : l.from
       this.view.dispatch({
-        selection: { anchor: l.from },
-        effects: [EditorView.scrollIntoView(l.from, { y: 'center' }), flashEffect.of(l.from)]
+        selection: { anchor, head: Math.min(anchor + length, l.to) },
+        effects: [EditorView.scrollIntoView(anchor, { y: 'center' }), flashEffect.of(l.from)]
       })
       this.view.focus()
       setTimeout(() => this.view.dispatch({ effects: flashEffect.of(null) }), 1200)
     })
+  }
+
+  private refreshDiagnostics(path: string): void {
+    const doc = this.docs.get(path)
+    if (!doc) return
+    const state = path === this.active ? this.view.state : doc.state
+    // Both layers are line-based, so recomputing them against the current document is cheap and stays aligned.
+    const compile = compileToDiagnostics(state, this.compileEntries.filter((e) => e.file === path))
+    const lsp = lspToDiagnostics(state, this.lspDiagnostics.get(path) ?? [])
+    const all = [...compile, ...lsp]
+    this.update(path, (s) => setDiagnostics(s, all))
+  }
+
+  private update(path: string, spec: (state: EditorState) => TransactionSpec): void {
+    if (path === this.active) {
+      this.view.dispatch(spec(this.view.state))
+    } else {
+      const doc = this.docs.get(path)
+      if (doc) doc.state = doc.state.update(spec(doc.state)).state
+    }
   }
 
   private stash(): void {
@@ -182,7 +254,7 @@ export class EditorManager {
   }
 }
 
-function toDiagnostics(state: EditorState, entries: LogEntry[]): Diagnostic[] {
+function compileToDiagnostics(state: EditorState, entries: LogEntry[]): Diagnostic[] {
   const out: Diagnostic[] = []
   for (const e of entries) {
     if (!e.line || e.line > state.doc.lines) continue
@@ -198,4 +270,20 @@ function toDiagnostics(state: EditorState, entries: LogEntry[]): Diagnostic[] {
     })
   }
   return out
+}
+
+function lspToDiagnostics(state: EditorState, diagnostics: LspDiagnostic[]): Diagnostic[] {
+  const doc = state.doc
+  const pos = (p: { line: number; character: number }) => {
+    if (p.line + 1 > doc.lines) return doc.length
+    const line = doc.line(p.line + 1)
+    return Math.min(line.from + p.character, line.to)
+  }
+  return diagnostics.map((d) => {
+    const from = pos(d.range.start)
+    const to = Math.max(from, pos(d.range.end))
+    // chktex hints are stylistic, so keep them low-key.
+    const severity: Diagnostic['severity'] = d.source === 'ChkTeX' || d.source === 'chktex' ? 'info' : d.severity === 1 ? 'error' : d.severity === 2 ? 'warning' : 'info'
+    return { from, to, severity, message: d.message, source: d.source ?? 'texlab' }
+  })
 }

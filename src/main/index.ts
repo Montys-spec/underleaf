@@ -1,14 +1,25 @@
-import { app, BrowserWindow, dialog, ipcMain, Menu, shell, type MenuItemConstructorOptions } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain, Menu, nativeTheme, shell, type MenuItemConstructorOptions } from 'electron'
 import { promises as fs, existsSync, statSync } from 'node:fs'
 import path from 'node:path'
-import type { MenuCommand, ProjectInfo, ProjectSettings, RecentProject } from '@shared/types'
+import type { LspOptions, MenuCommand, ProjectInfo, ProjectSettings, RecentProject, SearchOptions, ThemePreference } from '@shared/types'
 import { CompileRunner } from './compiler'
-import { BLANK_DOCUMENT, Project } from './project'
+import { gitCommit, gitDiff, gitInit, gitPull, gitPush, gitStatus } from './git'
+import { TexlabBridge } from './lsp'
+import { Project } from './project'
+import { projectSymbols, replaceInProject, searchProject, wordCount } from './projectTools'
+import { SpellService } from './spell'
+import { forwardSearch, inverseSearch } from './synctex'
+import { getTemplate, listTemplates } from './templates'
 
 let win: BrowserWindow | null = null
 let project: Project | null = null
 let pendingOpen: string | null = initialProjectFromArgs()
 const runner = new CompileRunner()
+// Helper binaries ship in the app bundle; in development they live in resources/bin.
+const bundledBin = app.isPackaged ? path.join(process.resourcesPath, 'bin') : path.join(app.getAppPath(), 'resources', 'bin')
+// A texlab binary shipped inside the app bundle takes precedence over a Homebrew install.
+const texlab = new TexlabBridge(bundledBin, (msg) => win?.webContents.send('lsp:message', msg))
+const spell = new SpellService(bundledBin)
 
 const recentFile = (): string => path.join(app.getPath('userData'), 'recent-projects.json')
 
@@ -46,6 +57,7 @@ async function addRecent(p: Project): Promise<void> {
 async function openProject(root: string): Promise<ProjectInfo> {
   project?.close()
   runner.stop()
+  texlab.stop()
   const p = new Project(root)
   await p.load()
   project = p
@@ -83,15 +95,34 @@ function buildMenu(): void {
         { label: 'New File…', accelerator: 'CmdOrCtrl+N', click: () => sendMenu('new-file') },
         { label: 'Save', accelerator: 'CmdOrCtrl+S', click: () => sendMenu('save') },
         { type: 'separator' },
+        { label: 'Export PDF…', accelerator: 'CmdOrCtrl+Shift+E', click: () => sendMenu('export-pdf') },
+        { type: 'separator' },
         { label: 'Project Settings…', accelerator: 'CmdOrCtrl+,', click: () => sendMenu('settings') },
         { label: 'Close Project', accelerator: 'CmdOrCtrl+Shift+W', click: () => sendMenu('close-project') }
       ]
     },
-    { role: 'editMenu' },
+    {
+      label: 'Edit',
+      submenu: [
+        { role: 'undo' },
+        { role: 'redo' },
+        { type: 'separator' },
+        { role: 'cut' },
+        { role: 'copy' },
+        { role: 'paste' },
+        { role: 'selectAll' },
+        { type: 'separator' },
+        { label: 'Find in Project', accelerator: 'CmdOrCtrl+Shift+F', click: () => sendMenu('search') }
+      ]
+    },
     {
       label: 'View',
       submenu: [
         { label: 'Toggle Logs', accelerator: 'CmdOrCtrl+L', click: () => sendMenu('toggle-logs') },
+        { label: 'Toggle Outline', accelerator: 'CmdOrCtrl+Shift+O', click: () => sendMenu('toggle-outline') },
+        { label: 'Source Control', accelerator: 'CmdOrCtrl+Shift+G', click: () => sendMenu('git') },
+        { type: 'separator' },
+        { label: 'Show Position in PDF', accelerator: 'CmdOrCtrl+J', click: () => sendMenu('sync-to-pdf') },
         { type: 'separator' },
         { label: 'Zoom PDF In', accelerator: 'CmdOrCtrl+=', click: () => sendMenu('zoom-in') },
         { label: 'Zoom PDF Out', accelerator: 'CmdOrCtrl+-', click: () => sendMenu('zoom-out') },
@@ -104,7 +135,11 @@ function buildMenu(): void {
     },
     {
       label: 'Build',
-      submenu: [{ label: 'Recompile', accelerator: 'CmdOrCtrl+Enter', click: () => sendMenu('compile') }]
+      submenu: [
+        { label: 'Recompile', accelerator: 'CmdOrCtrl+Enter', click: () => sendMenu('compile') },
+        { type: 'separator' },
+        { label: 'Word Count', accelerator: 'CmdOrCtrl+Shift+C', click: () => sendMenu('word-count') }
+      ]
     },
     { role: 'windowMenu' }
   ]
@@ -127,7 +162,8 @@ function registerIpc(): void {
     })
     return res.canceled || !res.filePaths[0] ? null : openProject(res.filePaths[0])
   })
-  ipcMain.handle('project:newDialog', async () => {
+  ipcMain.handle('project:templates', () => listTemplates())
+  ipcMain.handle('project:newDialog', async (_e, templateId?: string) => {
     const res = await dialog.showSaveDialog(win!, {
       title: 'New LaTeX Project',
       buttonLabel: 'Create Project',
@@ -136,12 +172,21 @@ function registerIpc(): void {
     })
     if (res.canceled || !res.filePath) return null
     if (existsSync(res.filePath)) throw new Error(`"${path.basename(res.filePath)}" already exists.`)
-    await fs.mkdir(res.filePath, { recursive: true })
-    await fs.writeFile(path.join(res.filePath, 'main.tex'), BLANK_DOCUMENT)
+    const template = getTemplate(templateId)
+    for (const [rel, content] of Object.entries(template.files)) {
+      const dest = path.join(res.filePath, rel)
+      await fs.mkdir(path.dirname(dest), { recursive: true })
+      await fs.writeFile(dest, content)
+    }
+    if (template.compiler) {
+      await fs.mkdir(path.join(res.filePath, '.underleaf'), { recursive: true })
+      await fs.writeFile(path.join(res.filePath, '.underleaf', 'settings.json'), JSON.stringify({ mainFile: 'main.tex', compiler: template.compiler }, null, 2))
+    }
     return openProject(res.filePath)
   })
   ipcMain.handle('project:close', () => {
     runner.stop()
+    texlab.stop()
     project?.close()
     project = null
     win?.setTitle('Underleaf')
@@ -196,6 +241,10 @@ function registerIpc(): void {
 
   ipcMain.handle('compile:run', () => runner.compile(requireProject()))
   ipcMain.handle('compile:stop', () => runner.stop())
+  ipcMain.handle('compile:clearCache', async () => {
+    runner.stop()
+    await fs.rm(requireProject().buildDir, { recursive: true, force: true })
+  })
   ipcMain.handle('compile:readPdf', async () => {
     try {
       return new Uint8Array(await fs.readFile(pdfPath(requireProject())))
@@ -206,6 +255,55 @@ function registerIpc(): void {
   ipcMain.handle('compile:openPdf', async () => {
     const err = await shell.openPath(pdfPath(requireProject()))
     if (err) throw new Error(err)
+  })
+  ipcMain.handle('compile:exportPdf', async () => {
+    const p = requireProject()
+    const src = pdfPath(p)
+    if (!existsSync(src)) throw new Error('There is no PDF yet. Compile the project first.')
+    const res = await dialog.showSaveDialog(win!, {
+      title: 'Export PDF',
+      defaultPath: path.join(app.getPath('downloads'), `${p.name}.pdf`),
+      filters: [{ name: 'PDF', extensions: ['pdf'] }]
+    })
+    if (res.canceled || !res.filePath) return null
+    await fs.copyFile(src, res.filePath)
+    return res.filePath
+  })
+  ipcMain.handle('synctex:forward', (_e, rel: string, line: number, column: number) => {
+    const p = requireProject()
+    return forwardSearch(pdfPath(p), p.resolve(rel), line, column)
+  })
+  ipcMain.handle('synctex:inverse', async (_e, page: number, x: number, y: number) => {
+    const p = requireProject()
+    const hit = await inverseSearch(pdfPath(p), page, x, y)
+    if (!hit) return null
+    const rel = p.relative(hit.file)
+    return rel.startsWith('..') ? null : { ...hit, file: rel }
+  })
+
+  ipcMain.handle('tools:wordCount', () => wordCount(requireProject()))
+  ipcMain.handle('tools:search', (_e, opts: SearchOptions) => searchProject(requireProject(), opts))
+  ipcMain.handle('tools:replaceAll', (_e, opts: SearchOptions, replacement: string) => replaceInProject(requireProject(), opts, replacement))
+  ipcMain.handle('tools:symbols', () => projectSymbols(requireProject()))
+
+  ipcMain.handle('git:status', () => gitStatus(requireProject().root))
+  ipcMain.handle('git:init', () => gitInit(requireProject().root))
+  ipcMain.handle('git:commit', (_e, message: string) => gitCommit(requireProject().root, message))
+  ipcMain.handle('git:diff', (_e, rel: string) => gitDiff(requireProject().root, rel))
+  ipcMain.handle('git:push', () => gitPush(requireProject().root))
+  ipcMain.handle('git:pull', () => gitPull(requireProject().root))
+
+  ipcMain.handle('lsp:start', (_e, opts: LspOptions) => texlab.start(requireProject().root, opts))
+  ipcMain.on('lsp:send', (_e, message: string) => texlab.send(message))
+
+  ipcMain.handle('spell:check', (_e, words: string[], lang: string | null) => spell.check(words, lang))
+  ipcMain.handle('spell:suggest', (_e, word: string, lang: string | null) => spell.suggest(word, lang))
+  ipcMain.handle('spell:learn', (_e, word: string) => spell.learn(word))
+  ipcMain.handle('spell:detect', (_e, text: string) => spell.detect(text))
+  ipcMain.handle('spell:languages', () => (spell.available ? spell.languages() : []))
+  ipcMain.on('app:theme', (_e, theme: ThemePreference) => {
+    nativeTheme.themeSource = theme
+    win?.setBackgroundColor(nativeTheme.shouldUseDarkColors ? '#161b22' : '#ffffff')
   })
 }
 
@@ -224,7 +322,9 @@ function createWindow(): void {
       preload: path.join(__dirname, '../preload/index.js'),
       contextIsolation: true,
       nodeIntegration: false,
-      sandbox: true
+      sandbox: true,
+      // Underleaf checks spelling itself (LaTeX-aware); Chromium's checker would flag every command.
+      spellcheck: false
     }
   })
   win.once('ready-to-show', () => win?.show())
@@ -250,6 +350,9 @@ function scheduleDebugCapture(): void {
   const out = process.env.UNDERLEAF_CAPTURE
   if (!out || !win) return
   const delay = Number(process.env.UNDERLEAF_CAPTURE_DELAY ?? 6000)
+  win.webContents.on('console-message', (e) => {
+    if (e.level === 'warning' || e.level === 'error') console.log(`[renderer ${e.level}]`, e.message)
+  })
   win.webContents.once('did-finish-load', () => {
     setTimeout(async () => {
       const script = process.env.UNDERLEAF_CAPTURE_JS
@@ -287,6 +390,8 @@ app.whenReady().then(() => {
 
 app.on('window-all-closed', () => {
   runner.stop()
+  texlab.stop()
+  spell.stop()
   project?.close()
   app.quit()
 })

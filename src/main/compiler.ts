@@ -4,15 +4,13 @@ import path from 'node:path'
 import { latexmkEntries, parseLatexLog } from '@shared/logParser'
 import type { CompileResult, Compiler } from '@shared/types'
 import type { Project } from './project'
+import { TOOL_ENV } from './tools'
 
 const ENGINE_FLAG: Record<Compiler, string> = {
   pdflatex: '-pdf',
   xelatex: '-pdfxe',
   lualatex: '-pdflua'
 }
-
-/** Apps launched from Finder get a minimal PATH, so add the usual TeX and Homebrew locations. */
-const EXTRA_PATH = ['/Library/TeX/texbin', '/usr/local/bin', '/opt/homebrew/bin', '/usr/bin', '/bin']
 
 const TIMEOUT_MS = 4 * 60 * 1000
 
@@ -51,8 +49,7 @@ export class CompileRunner {
       path.basename(mainAbs)
     ]
     const env = {
-      ...process.env,
-      PATH: [...EXTRA_PATH, process.env.PATH ?? ''].join(':'),
+      ...TOOL_ENV,
       // Stop TeX from wrapping log lines at 79 columns, which makes the log parseable.
       max_print_line: '10000',
       error_line: '254',

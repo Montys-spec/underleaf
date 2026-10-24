@@ -1,18 +1,29 @@
+import { findReferences, jumpToDefinition, renameSymbol, serverCompletionSource } from '@codemirror/lsp-client'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import type { CompileResult, FileNode, LogEntry, MenuCommand, ProjectInfo, ProjectSettings } from '@shared/types'
+import { findOutline, type OutlineItem } from '@shared/texScan'
+import type { CompileResult, Compiler, FileNode, LogEntry, LspStatus, MenuCommand, ProjectInfo, ProjectSettings, ProjectSymbols } from '@shared/types'
+import { fallbackSource, snippetSource } from '../editor/completions'
 import { EditorManager } from '../editor/manager'
+import { forgetWord, ignoreWord, misspelledWordAt, proseSample } from '../editor/spell'
+import { TexlabClient } from '../lsp/texlab'
+import { getPrefs, setPrefs, type Prefs } from '../prefs'
 import { load, save } from '../storage'
 import { ContextMenu, type MenuItem, type MenuRequest } from './ContextMenu'
-import { ConfirmDialog, errorMessage, PromptDialog, SettingsDialog, type ConfirmRequest, type PromptRequest } from './Dialogs'
+import { ConfirmDialog, DiffDialog, errorMessage, PromptDialog, SettingsDialog, WordCountDialog, type ConfirmRequest, type PromptRequest } from './Dialogs'
 import { BINARY_EXT, EditorPane, IMAGE_EXT } from './EditorPane'
 import { FileTree, parentDir } from './FileTree'
-import { HomeIcon, LeafIcon, SettingsIcon } from './icons'
-import { PdfPane, type ZoomRequest } from './PdfPane'
+import { GitPanel } from './GitPanel'
+import { FilesIcon, GitIcon, HomeIcon, LeafIcon, SearchIcon, SettingsIcon, TextIcon } from './icons'
+import { Outline } from './Outline'
+import { PdfPane, type SyncRequest, type ZoomRequest } from './PdfPane'
+import { SearchPanel } from './SearchPanel'
 import { Splitter } from './Splitter'
 
 const api = window.underleaf
 const AUTOSAVE_MS = 1000
 const SPLITTER_W = 5
+
+type SidebarTab = 'files' | 'search' | 'git'
 
 interface Props {
   initial: ProjectInfo
@@ -42,26 +53,47 @@ export function Workspace({ initial, onLeave }: Props) {
   const [pdf, setPdf] = useState<Uint8Array | null>(null)
   const [showLogs, setShowLogs] = useState(false)
   const [zoomRequest, setZoomRequest] = useState<ZoomRequest | null>(null)
+  const [syncRequest, setSyncRequest] = useState<SyncRequest | null>(null)
   const [prompt, setPrompt] = useState<PromptRequest | null>(null)
   const [confirm, setConfirm] = useState<ConfirmRequest | null>(null)
   const [menu, setMenu] = useState<MenuRequest | null>(null)
   const [settingsOpen, setSettingsOpen] = useState(false)
+  const [wordCountOpen, setWordCountOpen] = useState(false)
+  const [diffPath, setDiffPath] = useState<string | null>(null)
   const [toast, setToast] = useState<string | null>(null)
-  const [sidebarW, setSidebarW] = useState(() => load('sidebarWidth', 230))
+  const [sidebarW, setSidebarW] = useState(() => load('sidebarWidth', 240))
   const [editorFrac, setEditorFrac] = useState(() => load('editorFraction', 0.5))
+  const [sidebarTab, setSidebarTab] = useState<SidebarTab>(() => load('sidebarTab', 'files'))
+  const [outlineOpen, setOutlineOpen] = useState(() => load('outlineOpen', true))
+  const [outline, setOutline] = useState<OutlineItem[]>([])
+  const [cursorLine, setCursorLine] = useState(1)
+  const [searchFocus, setSearchFocus] = useState(0)
+  const [gitRefresh, setGitRefresh] = useState(0)
+  const [lspStatus, setLspStatus] = useState<LspStatus>({ available: false, error: 'Starting texlab…' })
 
   const bodyRef = useRef<HTMLDivElement>(null)
   const compilingRef = useRef(false)
   const pendingCompile = useRef(false)
   const autosaveTimer = useRef<number | undefined>(undefined)
+  const outlineTimer = useRef<number | undefined>(undefined)
   const resultRef = useRef<CompileResult | null>(null)
+  const symbolsRef = useRef<ProjectSymbols | null>(null)
+  // Detected spelling language per open file (when the preference is "auto").
+  const spellLangs = useRef(new Map<string, string | null>())
+  const texlabRef = useRef<TexlabClient | null>(null)
   const tabsRef = useRef<string[]>([])
   tabsRef.current = tabs
   const activeRef = useRef<string | null>(null)
   activeRef.current = active
 
   // The editor callbacks are created once, so they go through this ref to reach the latest closures.
-  const actions = useRef({ saveAndCompile: () => {}, compile: () => {}, scheduleAutosave: () => {} })
+  const actions = useRef({
+    compile: () => {},
+    scheduleAutosave: () => {},
+    syncToPdf: () => {},
+    contextMenu: (_pos: number, _x: number, _y: number) => {},
+    outlineChanged: () => {}
+  })
 
   const manager = useMemo(
     () =>
@@ -75,21 +107,50 @@ export function Workspace({ initial, onLeave }: Props) {
             return next
           })
           if (isDirty) actions.current.scheduleAutosave()
+          actions.current.outlineChanged()
         },
-        onSave: () => actions.current.saveAndCompile(),
-        onCompile: () => actions.current.compile()
+        onCursor: (_path, line) => setCursorLine(line),
+        onContextMenu: (pos, x, y) => actions.current.contextMenu(pos, x, y),
+        onSave: () => actions.current.compile(),
+        onCompile: () => actions.current.compile(),
+        onSyncToPdf: () => actions.current.syncToPdf(),
+        completionSources: () =>
+          texlabRef.current?.active ? [snippetSource, serverCompletionSource] : [snippetSource, fallbackSource(() => symbolsRef.current)],
+        spellEnabled: () => getPrefs().spellCheck,
+        spellLanguage: () => {
+          const pref = getPrefs().spellLanguage
+          if (pref !== 'auto') return pref
+          const path = activeRef.current
+          return path && spellLangs.current.has(path) ? spellLangs.current.get(path) : undefined
+        }
       }),
     []
   )
 
-  const showError = useCallback((err: unknown) => {
-    setToast(errorMessage(err))
-    window.setTimeout(() => setToast(null), 6000)
+  // Lets scripted smoke tests (UNDERLEAF_CAPTURE_JS) reach the editor.
+  useEffect(() => {
+    Object.assign(window, { __underleaf: { view: manager.view } })
+  }, [manager])
+
+  const relPath = useCallback((abs: string) => (abs.startsWith(initial.root + '/') ? abs.slice(initial.root.length + 1) : null), [initial.root])
+
+  const notify = useCallback((message: string) => {
+    setToast(message)
+    window.setTimeout(() => setToast((t) => (t === message ? null : t)), 5000)
+  }, [])
+
+  const showError = useCallback((err: unknown) => notify(errorMessage(err)), [notify])
+
+  const refreshSymbols = useCallback(async () => {
+    // Only the fallback completion needs this; texlab indexes the project itself.
+    if (texlabRef.current?.active) return
+    symbolsRef.current = await api.getSymbols().catch(() => symbolsRef.current)
   }, [])
 
   const saveAll = useCallback(async () => {
     window.clearTimeout(autosaveTimer.current)
-    for (const path of manager.dirtyPaths()) {
+    const paths = manager.dirtyPaths()
+    for (const path of paths) {
       const content = manager.content(path)!
       try {
         await api.writeFile(path, content)
@@ -99,7 +160,12 @@ export function Workspace({ initial, onLeave }: Props) {
       }
     }
     setDirty(new Set(manager.dirtyPaths()))
-  }, [manager, showError])
+    if (paths.length) {
+      void refreshSymbols()
+      // The file watcher ignores the app's own writes, so tell the git panel directly.
+      setGitRefresh((n) => n + 1)
+    }
+  }, [manager, refreshSymbols, showError])
 
   const compile = useCallback(async () => {
     if (compilingRef.current) {
@@ -113,7 +179,7 @@ export function Workspace({ initial, onLeave }: Props) {
       const res = await api.compile()
       resultRef.current = res
       setResult(res)
-      manager.applyDiagnostics(res.entries)
+      manager.applyCompileDiagnostics(res.entries)
       if (res.hasPdf) setPdf(await api.readPdf())
       else if (res.status !== 'cancelled') {
         setPdf(null)
@@ -131,15 +197,6 @@ export function Workspace({ initial, onLeave }: Props) {
     }
   }, [manager, saveAll, showError])
 
-  actions.current = {
-    saveAndCompile: () => void compile(),
-    compile: () => void compile(),
-    scheduleAutosave: () => {
-      window.clearTimeout(autosaveTimer.current)
-      autosaveTimer.current = window.setTimeout(() => void saveAll(), AUTOSAVE_MS)
-    }
-  }
-
   const refresh = useCallback(async () => {
     const next = await api.refreshProject()
     setInfo(next)
@@ -155,7 +212,6 @@ export function Workspace({ initial, onLeave }: Props) {
           manager.activate(path)
         } else {
           manager.open(path, await api.readFile(path))
-          manager.diagnosticsFor(path, resultRef.current?.entries ?? [])
         }
         setTabs((prev) => (prev.includes(path) ? prev : [...prev, path]))
         setActive(path)
@@ -184,16 +240,51 @@ export function Workspace({ initial, onLeave }: Props) {
     [manager, openFile, saveAll]
   )
 
-  const jumpTo = useCallback(
-    async (entry: LogEntry) => {
-      if (!entry.file) return
-      await openFile(entry.file)
-      if (entry.line) manager.goToLine(entry.line)
+  const openAt = useCallback(
+    async (file: string, line?: number, column?: number, length?: number) => {
+      await openFile(file)
+      if (line) manager.goToLine(line, column, length)
     },
     [manager, openFile]
   )
 
-  const saveSettings = useCallback(
+  const jumpTo = useCallback((entry: LogEntry) => entry.file && void openAt(entry.file, entry.line), [openAt])
+
+  // ---- SyncTeX -----------------------------------------------------------------------------
+
+  const syncToPdf = useCallback(async () => {
+    const path = activeRef.current
+    const cur = manager.cursor()
+    if (!path || !cur || !path.endsWith('.tex')) return
+    try {
+      const boxes = await api.syncForward(path, cur.line, cur.column)
+      if (!boxes.length) {
+        notify('No matching place in the PDF. Recompile and try again.')
+        return
+      }
+      setShowLogs(false)
+      setSyncRequest((r) => ({ boxes, seq: (r?.seq ?? 0) + 1 }))
+    } catch (err) {
+      showError(err)
+    }
+  }, [manager, notify, showError])
+
+  const syncToCode = useCallback(
+    async (page: number, x: number, y: number) => {
+      try {
+        const hit = await api.syncInverse(page, x, y)
+        if (hit) await openAt(hit.file, hit.line)
+        else notify('No matching source line for this spot.')
+      } catch (err) {
+        showError(err)
+      }
+    },
+    [notify, openAt, showError]
+  )
+
+  // ---- Settings ----------------------------------------------------------------------------
+
+  const saveProjectSettings = useCallback(
     async (s: ProjectSettings) => {
       const saved = await api.saveSettings(s)
       setInfo((prev) => ({ ...prev, settings: saved }))
@@ -201,6 +292,22 @@ export function Workspace({ initial, onLeave }: Props) {
     },
     [compile]
   )
+
+  const saveAllSettings = useCallback(
+    async (s: ProjectSettings, prefs: Prefs) => {
+      const before = getPrefs()
+      setPrefs(prefs)
+      if (before.spellCheck !== prefs.spellCheck || before.spellLanguage !== prefs.spellLanguage) manager.refreshSpelling()
+      if (before.styleHints !== prefs.styleHints) void texlabRef.current?.reconfigure({ chktex: prefs.styleHints })
+      if (s.mainFile !== info.settings.mainFile || s.compiler !== info.settings.compiler) await saveProjectSettings(s)
+    },
+    [info.settings, manager, saveProjectSettings]
+  )
+
+  const clearCache = useCallback(async () => {
+    await api.clearCache()
+    void compile()
+  }, [compile])
 
   const leave = useCallback(
     async (next: 'home' | 'open' | 'new') => {
@@ -257,7 +364,7 @@ export function Workspace({ initial, onLeave }: Props) {
     setTabs((prev) => prev.map(remap))
     setActive((prev) => (prev ? remap(prev) : prev))
     if (remap(info.settings.mainFile) !== info.settings.mainFile) {
-      await saveSettings({ ...info.settings, mainFile: remap(info.settings.mainFile) })
+      await saveProjectSettings({ ...info.settings, mainFile: remap(info.settings.mainFile) })
     }
     await refresh()
   }
@@ -305,11 +412,11 @@ export function Workspace({ initial, onLeave }: Props) {
     }
   }
 
-  const openContextMenu = (node: FileNode | null, x: number, y: number) => {
+  const treeContextMenu = (node: FileNode | null, x: number, y: number) => {
     const dir = node ? (node.type === 'dir' ? node.path : parentDir(node.path)) : ''
     const items: MenuItem[] = []
     if (node?.type === 'file' && node.path.endsWith('.tex') && node.path !== info.settings.mainFile) {
-      items.push({ label: 'Set as main document', onSelect: () => void saveSettings({ ...info.settings, mainFile: node.path }) })
+      items.push({ label: 'Set as main document', onSelect: () => void saveProjectSettings({ ...info.settings, mainFile: node.path }) })
     }
     items.push(
       { label: 'New file…', onSelect: () => newFile(dir), separatorBefore: items.length > 0 },
@@ -326,6 +433,88 @@ export function Workspace({ initial, onLeave }: Props) {
     setMenu({ x, y, items })
   }
 
+  const editorContextMenu = async (pos: number, x: number, y: number) => {
+    const view = manager.view
+    const items: MenuItem[] = []
+    const pref = getPrefs().spellLanguage
+    const lang = pref === 'auto' ? (spellLangs.current.get(activeRef.current ?? '') ?? null) : pref
+    const typo = getPrefs().spellCheck && activeRef.current?.endsWith('.tex') ? misspelledWordAt(view, pos, lang) : null
+    const suggestions = typo ? (await api.spellSuggest(typo.word, lang).catch(() => [])).slice(0, 6) : []
+    if (typo) {
+      for (const s of suggestions) {
+        items.push({ label: s, onSelect: () => view.dispatch({ changes: { from: typo.from, to: typo.to, insert: s }, selection: { anchor: typo.from + s.length } }) })
+      }
+      if (!suggestions.length) items.push({ label: 'No spelling suggestions', onSelect: () => {}, disabled: true })
+      items.push(
+        {
+          label: `Add “${typo.word}” to dictionary`,
+          separatorBefore: true,
+          onSelect: async () => {
+            await api.spellLearn(typo.word)
+            forgetWord(typo.word)
+            manager.refreshSpelling()
+          }
+        },
+        {
+          label: 'Ignore for this session',
+          onSelect: () => {
+            ignoreWord(typo.word)
+            manager.refreshSpelling()
+          }
+        }
+      )
+    }
+    const sel = view.state.selection.main
+    items.push(
+      {
+        label: 'Cut',
+        separatorBefore: items.length > 0,
+        disabled: sel.empty,
+        onSelect: () => {
+          void navigator.clipboard.writeText(view.state.sliceDoc(sel.from, sel.to))
+          view.dispatch({ changes: { from: sel.from, to: sel.to, insert: '' } })
+        }
+      },
+      { label: 'Copy', disabled: sel.empty, onSelect: () => void navigator.clipboard.writeText(view.state.sliceDoc(sel.from, sel.to)) },
+      {
+        label: 'Paste',
+        onSelect: async () => {
+          const text = await navigator.clipboard.readText()
+          view.dispatch(view.state.replaceSelection(text))
+          view.focus()
+        }
+      }
+    )
+    if (activeRef.current?.endsWith('.tex')) {
+      items.push({ label: 'Show in PDF', separatorBefore: true, onSelect: () => void syncToPdf() })
+      if (texlabRef.current?.active) {
+        items.push(
+          { label: 'Go to definition', onSelect: () => jumpToDefinition(view) },
+          { label: 'Find references', onSelect: () => findReferences(view) },
+          { label: 'Rename symbol…', onSelect: () => renameSymbol(view) }
+        )
+      }
+    }
+    setMenu({ x, y, items })
+  }
+
+  actions.current = {
+    compile: () => void compile(),
+    scheduleAutosave: () => {
+      window.clearTimeout(autosaveTimer.current)
+      autosaveTimer.current = window.setTimeout(() => void (getPrefs().autoCompile ? compile() : saveAll()), AUTOSAVE_MS)
+    },
+    syncToPdf: () => void syncToPdf(),
+    contextMenu: (pos, x, y) => void editorContextMenu(pos, x, y),
+    outlineChanged: () => {
+      window.clearTimeout(outlineTimer.current)
+      outlineTimer.current = window.setTimeout(() => {
+        const path = activeRef.current
+        setOutline(path?.endsWith('.tex') ? findOutline(manager.content(path) ?? '') : [])
+      }, 300)
+    }
+  }
+
   // ---- Lifecycle -------------------------------------------------------------------------
 
   useEffect(() => {
@@ -339,8 +528,47 @@ export function Workspace({ initial, onLeave }: Props) {
       if (first) await openFile(first)
     })()
     void compile()
+
+    const texlab = new TexlabClient(
+      initial.root,
+      (abs, diagnostics) => {
+        const rel = relPath(abs)
+        if (rel) manager.applyLspDiagnostics(rel, diagnostics)
+      },
+      async (abs) => {
+        const rel = relPath(abs)
+        if (!rel) return null
+        await openFile(rel)
+        return manager.view
+      }
+    )
+    texlabRef.current = texlab
+    texlab.start({ chktex: getPrefs().styleHints }).then((status) => {
+      setLspStatus(status)
+      if (status.available) manager.setLanguageServer((path) => texlab.extensionFor(`${initial.root}/${path}`))
+      else void refreshSymbols()
+    })
+    return () => {
+      texlab.stop()
+      manager.setLanguageServer(null)
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
+
+  useEffect(() => {
+    actions.current.outlineChanged()
+    // Detect the language of a newly opened document once, for spell checking.
+    if (active?.endsWith('.tex') && !spellLangs.current.has(active) && getPrefs().spellLanguage === 'auto') {
+      const sample = proseSample(manager.content(active) ?? '')
+      api
+        .spellDetect(sample)
+        .catch(() => null)
+        .then((lang) => {
+          spellLangs.current.set(active, sample.split(' ').length >= 5 ? lang : null)
+          if (activeRef.current === active) manager.refreshSpelling()
+        })
+    }
+  }, [active, manager])
 
   useEffect(() => {
     save(`tabs:${info.root}`, tabs)
@@ -349,15 +577,20 @@ export function Workspace({ initial, onLeave }: Props) {
 
   useEffect(() => save('sidebarWidth', sidebarW), [sidebarW])
   useEffect(() => save('editorFraction', editorFrac), [editorFrac])
+  useEffect(() => save('sidebarTab', sidebarTab), [sidebarTab])
+  useEffect(() => save('outlineOpen', outlineOpen), [outlineOpen])
 
   useEffect(
     () =>
       api.onFsChange(async (e) => {
         if (e.kind === 'file') {
           if (manager.has(e.path)) manager.reloadFromDisk(e.path, await api.readFile(e.path).catch(() => ''))
+          setGitRefresh((n) => n + 1)
           return
         }
         const next = await refresh()
+        setGitRefresh((n) => n + 1)
+        void refreshSymbols()
         // Editors that save atomically only produce "rename" events, so re-read open files too.
         const gone: string[] = []
         for (const t of tabsRef.current) {
@@ -370,8 +603,17 @@ export function Workspace({ initial, onLeave }: Props) {
         }
         if (gone.length) await closeTabs(gone, { save: false })
       }),
-    [closeTabs, manager, refresh]
+    [closeTabs, manager, refresh, refreshSymbols]
   )
+
+  const exportPdf = useCallback(async () => {
+    try {
+      const dest = await api.exportPdf()
+      if (dest) notify(`Saved ${dest.split('/').pop()}`)
+    } catch (err) {
+      showError(err)
+    }
+  }, [notify, showError])
 
   useEffect(
     () =>
@@ -390,6 +632,26 @@ export function Workspace({ initial, onLeave }: Props) {
           case 'toggle-logs':
             setShowLogs((v) => !v)
             break
+          case 'toggle-outline':
+            setSidebarTab('files')
+            setOutlineOpen((v) => !v)
+            break
+          case 'search':
+            setSidebarTab('search')
+            setSearchFocus((n) => n + 1)
+            break
+          case 'git':
+            setSidebarTab('git')
+            break
+          case 'word-count':
+            void saveAll().then(() => setWordCountOpen(true))
+            break
+          case 'export-pdf':
+            void exportPdf()
+            break
+          case 'sync-to-pdf':
+            void syncToPdf()
+            break
           case 'zoom-in':
           case 'zoom-out':
           case 'zoom-fit':
@@ -407,7 +669,7 @@ export function Workspace({ initial, onLeave }: Props) {
         }
       }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [active, compile, leave]
+    [active, compile, leave, exportPdf, syncToPdf]
   )
 
   useEffect(() => {
@@ -426,7 +688,7 @@ export function Workspace({ initial, onLeave }: Props) {
 
   const dragSidebar = useCallback((x: number) => {
     const left = bodyRef.current?.getBoundingClientRect().left ?? 0
-    setSidebarW(Math.min(480, Math.max(150, x - left)))
+    setSidebarW(Math.min(520, Math.max(170, x - left)))
   }, [])
 
   const dragEditor = useCallback(
@@ -439,6 +701,21 @@ export function Workspace({ initial, onLeave }: Props) {
     [sidebarW]
   )
 
+  const sidebarButton = (tab: SidebarTab, Icon: typeof FilesIcon, title: string) => (
+    <button
+      className={`sidebar-tab${sidebarTab === tab ? ' active' : ''}`}
+      title={title}
+      aria-pressed={sidebarTab === tab}
+      onClick={() => {
+        setSidebarTab(tab)
+        if (tab === 'search') setSearchFocus((n) => n + 1)
+        if (tab === 'git') setGitRefresh((n) => n + 1)
+      }}
+    >
+      <Icon size={17} />
+    </button>
+  )
+
   return (
     <div className="workspace">
       <header className="titlebar">
@@ -446,8 +723,11 @@ export function Workspace({ initial, onLeave }: Props) {
           <button className="titlebar-btn" title="All projects" onClick={() => void leave('home')}>
             <HomeIcon size={16} />
           </button>
-          <button className="titlebar-btn" title="Project settings (⌘,)" onClick={() => setSettingsOpen(true)}>
+          <button className="titlebar-btn" title="Settings (⌘,)" onClick={() => setSettingsOpen(true)}>
             <SettingsIcon size={16} />
+          </button>
+          <button className="titlebar-btn" title="Word count (⇧⌘C)" onClick={() => void saveAll().then(() => setWordCountOpen(true))}>
+            <TextIcon size={16} />
           </button>
         </div>
         <div className="titlebar-title">
@@ -462,20 +742,60 @@ export function Workspace({ initial, onLeave }: Props) {
       </header>
 
       <div className="workspace-body" ref={bodyRef} style={{ gridTemplateColumns: `${sidebarW}px ${SPLITTER_W}px ${editorFrac}fr ${SPLITTER_W}px ${1 - editorFrac}fr` }}>
-        <FileTree
-          tree={info.tree}
-          activePath={active}
-          mainFile={info.settings.mainFile}
-          dirty={dirty}
-          onOpen={(p) => void openFile(p)}
-          onContextMenu={openContextMenu}
-          onNewFile={newFile}
-          onNewFolder={newFolder}
-          onUpload={(d) => void upload(d)}
-          onMove={(from, toDir) => void movePath(from, joinPath(toDir, from.split('/').pop()!)).catch(showError)}
-          onDropExternal={(d, files) => void dropExternal(d, files)}
-        />
-        <Splitter onDrag={dragSidebar} onDoubleClick={() => setSidebarW(230)} />
+        <aside className="sidebar">
+          <nav className="sidebar-tabs">
+            {sidebarButton('files', FilesIcon, 'Files and outline')}
+            {sidebarButton('search', SearchIcon, 'Search project (⇧⌘F)')}
+            {sidebarButton('git', GitIcon, 'Source control (⇧⌘G)')}
+          </nav>
+          <div className="sidebar-content" style={{ display: sidebarTab === 'files' ? 'flex' : 'none' }}>
+            <FileTree
+              tree={info.tree}
+              activePath={active}
+              mainFile={info.settings.mainFile}
+              dirty={dirty}
+              onOpen={(p) => void openFile(p)}
+              onContextMenu={treeContextMenu}
+              onNewFile={newFile}
+              onNewFolder={newFolder}
+              onUpload={(d) => void upload(d)}
+              onMove={(from, toDir) => void movePath(from, joinPath(toDir, from.split('/').pop()!)).catch(showError)}
+              onDropExternal={(d, files) => void dropExternal(d, files)}
+            />
+            <Outline items={outline} currentLine={cursorLine} open={outlineOpen} onToggle={() => setOutlineOpen((v) => !v)} onJump={(line) => manager.goToLine(line)} />
+          </div>
+          {sidebarTab === 'search' && (
+            <div className="sidebar-content">
+              <SearchPanel
+                focusSeq={searchFocus}
+                beforeSearch={saveAll}
+                onOpenMatch={(file, line, column, length) => void openAt(file, line, column, length)}
+                onReplaced={async (files) => {
+                  for (const f of files) if (manager.has(f)) manager.reloadFromDisk(f, await api.readFile(f))
+                  notify(`Replaced in ${files.length} file${files.length === 1 ? '' : 's'}.`)
+                }}
+                confirmReplace={(count, files, run) =>
+                  setConfirm({
+                    title: 'Replace all',
+                    message: (
+                      <p>
+                        Replace {count} match{count === 1 ? '' : 'es'} in {files} file{files === 1 ? '' : 's'}? Use git or Undo in each file to revert.
+                      </p>
+                    ),
+                    confirmLabel: 'Replace all',
+                    onConfirm: run
+                  })
+                }
+              />
+            </div>
+          )}
+          {sidebarTab === 'git' && (
+            <div className="sidebar-content">
+              <GitPanel refreshSeq={gitRefresh} beforeCommit={saveAll} onShowDiff={setDiffPath} onNotify={notify} />
+            </div>
+          )}
+        </aside>
+        <Splitter onDrag={dragSidebar} onDoubleClick={() => setSidebarW(240)} />
         <EditorPane
           manager={manager}
           tabs={tabs}
@@ -492,11 +812,17 @@ export function Workspace({ initial, onLeave }: Props) {
           result={result}
           showLogs={showLogs}
           zoomRequest={zoomRequest}
+          syncRequest={syncRequest}
+          compiler={info.settings.compiler}
           onCompile={() => void compile()}
           onStop={() => void api.stopCompile()}
+          onClearCache={() => void clearCache()}
+          onSetCompiler={(c: Compiler) => void saveProjectSettings({ ...info.settings, compiler: c })}
           onToggleLogs={() => setShowLogs((v) => !v)}
-          onJump={(e) => void jumpTo(e)}
+          onJump={jumpTo}
           onOpenExternal={() => void api.openPdfExternally().catch(showError)}
+          onSyncToPdf={() => void syncToPdf()}
+          onSyncToCode={(page, x, y) => void syncToCode(page, x, y)}
         />
       </div>
 
@@ -504,8 +830,10 @@ export function Workspace({ initial, onLeave }: Props) {
       {confirm && <ConfirmDialog req={confirm} onClose={() => setConfirm(null)} />}
       {menu && <ContextMenu req={menu} onClose={() => setMenu(null)} />}
       {settingsOpen && (
-        <SettingsDialog settings={info.settings} texFiles={info.texFiles} onSave={saveSettings} onClose={() => setSettingsOpen(false)} />
+        <SettingsDialog settings={info.settings} texFiles={info.texFiles} lspStatus={lspStatus} onSave={saveAllSettings} onClose={() => setSettingsOpen(false)} />
       )}
+      {wordCountOpen && <WordCountDialog onClose={() => setWordCountOpen(false)} />}
+      {diffPath && <DiffDialog path={diffPath} onClose={() => setDiffPath(null)} />}
       {toast && (
         <div className="toast" role="alert" onClick={() => setToast(null)}>
           {toast}

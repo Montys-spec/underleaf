@@ -1,5 +1,7 @@
-import { getDocument, GlobalWorkerOptions, type PDFDocumentLoadingTask, type PDFDocumentProxy, type PDFPageProxy } from 'pdfjs-dist'
+import { getDocument, GlobalWorkerOptions, TextLayer, type PDFDocumentLoadingTask, type PDFDocumentProxy, type PDFPageProxy } from 'pdfjs-dist'
 import workerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url'
+import 'pdfjs-dist/web/pdf_viewer.css'
+import type { SyncTexBox } from '@shared/types'
 
 GlobalWorkerOptions.workerSrc = workerUrl
 
@@ -13,12 +15,21 @@ interface PageSlot {
   el: HTMLDivElement
   rendered: number | null
   task?: { cancel(): void }
+  textLayer?: TextLayer
+}
+
+interface LinkAnnotation {
+  subtype: string
+  rect: number[]
+  url?: string
+  dest?: string | unknown[]
 }
 
 /**
- * Renders a PDF as a vertical stack of canvases inside a scroll container.
- * New versions of the document are rendered off-screen and swapped in, so a
- * recompile does not flash or lose the reading position.
+ * Renders a PDF as a vertical stack of pages inside a scroll container: a canvas,
+ * a selectable text layer and clickable links per page. New versions of the
+ * document are rendered off-screen and swapped in, so a recompile does not
+ * flash or lose the reading position.
  */
 export class PdfRenderer {
   private doc?: PDFDocumentProxy
@@ -31,6 +42,8 @@ export class PdfRenderer {
   private resizeObserver: ResizeObserver
   private lastWidth = 0
   onScaleChange?: (scale: number) => void
+  /** Double-click on a page: page number (1-based) and position in PDF points from the top-left. */
+  onDoubleClick?: (page: number, x: number, y: number) => void
 
   constructor(private container: HTMLDivElement) {
     this.resizeObserver = new ResizeObserver(() => {
@@ -41,6 +54,7 @@ export class PdfRenderer {
       }
     })
     this.resizeObserver.observe(container)
+    container.addEventListener('dblclick', this.handleDoubleClick)
   }
 
   get scale(): number {
@@ -67,6 +81,7 @@ export class PdfRenderer {
     const scrollTop = this.container.scrollTop
     const scrollLeft = this.container.scrollLeft
     this.doc = doc
+    for (const s of this.slots) s.textLayer?.cancel()
     this.slots = pages.map((page) => ({ page, el: document.createElement('div'), rendered: null }))
     this.lastWidth = this.container.clientWidth
     const stack = this.buildStack()
@@ -96,9 +111,36 @@ export class PdfRenderer {
     this.setZoom({ mode: 'scale', value: Math.round(next * 100) / 100 })
   }
 
+  /** Scrolls to and briefly highlights SyncTeX boxes. */
+  showBoxes(boxes: SyncTexBox[]): void {
+    if (!boxes.length || !this.stack) return
+    const scale = this.scale
+    const first = boxes[0]
+    const slot = this.slots[first.page - 1]
+    if (!slot) return
+    const top = slot.el.offsetTop + (first.v - first.H) * scale
+    this.container.scrollTo({ top: Math.max(0, top - this.container.clientHeight / 3), behavior: 'smooth' })
+    for (const b of boxes) {
+      const target = this.slots[b.page - 1]
+      if (!target) continue
+      const mark = document.createElement('div')
+      mark.className = 'pdf-sync-mark'
+      Object.assign(mark.style, {
+        left: `${b.h * scale}px`,
+        top: `${(b.v - b.H) * scale}px`,
+        width: `${Math.max(b.W, 20) * scale}px`,
+        height: `${Math.max(b.H, 8) * scale}px`
+      })
+      target.el.appendChild(mark)
+      setTimeout(() => mark.classList.add('fade'), 1600)
+      setTimeout(() => mark.remove(), 2600)
+    }
+  }
+
   clear(): void {
     this.loadToken++
     this.observer?.disconnect()
+    for (const s of this.slots) s.textLayer?.cancel()
     this.stack?.remove()
     this.stack = undefined
     this.slots = []
@@ -110,6 +152,18 @@ export class PdfRenderer {
   destroy(): void {
     this.clear()
     this.resizeObserver.disconnect()
+    this.container.removeEventListener('dblclick', this.handleDoubleClick)
+  }
+
+  private handleDoubleClick = (e: MouseEvent): void => {
+    const pageEl = (e.target as HTMLElement).closest('.pdf-page')
+    if (!pageEl || (e.target as HTMLElement).closest('a')) return
+    const index = this.slots.findIndex((s) => s.el === pageEl)
+    if (index < 0) return
+    const rect = pageEl.getBoundingClientRect()
+    const scale = this.scale
+    window.getSelection()?.removeAllRanges()
+    this.onDoubleClick?.(index + 1, (e.clientX - rect.left) / scale, (e.clientY - rect.top) / scale)
   }
 
   private relayout(): void {
@@ -117,6 +171,7 @@ export class PdfRenderer {
     const ratio = this.container.scrollHeight > 0 ? this.container.scrollTop / this.container.scrollHeight : 0
     for (const s of this.slots) {
       s.task?.cancel()
+      s.textLayer?.cancel()
       s.rendered = null
     }
     const stack = this.buildStack()
@@ -139,6 +194,11 @@ export class PdfRenderer {
       el.className = 'pdf-page'
       el.style.width = `${Math.floor(vp.width)}px`
       el.style.height = `${Math.floor(vp.height)}px`
+      // pdf.js text layers size themselves from these variables.
+      el.style.setProperty('--scale-factor', String(scale))
+      el.style.setProperty('--total-scale-factor', String(scale))
+      el.style.setProperty('--scale-round-x', '1px')
+      el.style.setProperty('--scale-round-y', '1px')
       s.el = el
       stack.appendChild(el)
     }
@@ -188,10 +248,69 @@ export class PdfRenderer {
     slot.task = task
     try {
       await task.promise
-      slot.el.replaceChildren(canvas)
     } catch (err) {
       if ((err as Error)?.name !== 'RenderingCancelledException') console.error(err)
       if (slot.rendered === scale) slot.rendered = null
+      return
     }
+    const cssViewport = slot.page.getViewport({ scale })
+    const textDiv = document.createElement('div')
+    textDiv.className = 'textLayer'
+    const links = document.createElement('div')
+    links.className = 'pdf-links'
+    slot.el.replaceChildren(canvas, textDiv, links)
+
+    slot.textLayer?.cancel()
+    const textLayer = new TextLayer({ textContentSource: slot.page.streamTextContent(), container: textDiv, viewport: cssViewport })
+    slot.textLayer = textLayer
+    textLayer.render().catch(() => {
+      // Cancelled because the page was re-rendered; nothing to do.
+    })
+    void this.renderLinks(slot.page, cssViewport, links)
+  }
+
+  private async renderLinks(page: PDFPageProxy, viewport: ReturnType<PDFPageProxy['getViewport']>, layer: HTMLDivElement): Promise<void> {
+    const annotations = (await page.getAnnotations({ intent: 'display' })) as LinkAnnotation[]
+    for (const a of annotations) {
+      if (a.subtype !== 'Link' || (!a.url && !a.dest)) continue
+      const [x1, y1] = viewport.convertToViewportPoint(a.rect[0], a.rect[1]) as number[]
+      const [x2, y2] = viewport.convertToViewportPoint(a.rect[2], a.rect[3]) as number[]
+      const link = document.createElement('a')
+      link.className = 'pdf-link'
+      Object.assign(link.style, {
+        left: `${Math.min(x1, x2)}px`,
+        top: `${Math.min(y1, y2)}px`,
+        width: `${Math.abs(x2 - x1)}px`,
+        height: `${Math.abs(y2 - y1)}px`
+      })
+      if (a.url) {
+        link.href = a.url
+        link.target = '_blank'
+        link.title = a.url
+      } else {
+        link.href = '#'
+        link.addEventListener('click', (e) => {
+          e.preventDefault()
+          void this.goToDestination(a.dest!)
+        })
+      }
+      layer.appendChild(link)
+    }
+  }
+
+  private async goToDestination(dest: string | unknown[]): Promise<void> {
+    if (!this.doc) return
+    const explicit = typeof dest === 'string' ? await this.doc.getDestination(dest) : dest
+    if (!explicit || !explicit[0]) return
+    const ref = explicit[0] as { num: number; gen: number } | number
+    const pageIndex = typeof ref === 'number' ? ref : await this.doc.getPageIndex(ref)
+    const slot = this.slots[pageIndex]
+    if (!slot) return
+    // XYZ destinations carry the target's top in PDF coordinates (origin bottom-left).
+    const kind = (explicit[1] as { name?: string } | undefined)?.name
+    const pdfTop = kind === 'XYZ' && typeof explicit[3] === 'number' ? (explicit[3] as number) : null
+    const pageHeight = slot.page.getViewport({ scale: 1 }).height
+    const offset = pdfTop !== null ? (pageHeight - pdfTop) * this.scale : 0
+    this.container.scrollTo({ top: slot.el.offsetTop + offset - 20, behavior: 'smooth' })
   }
 }

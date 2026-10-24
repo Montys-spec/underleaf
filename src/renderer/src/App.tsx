@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import type { ProjectInfo, RecentProject } from '@shared/types'
-import { errorMessage } from './components/Dialogs'
+import { errorMessage, TemplateDialog } from './components/Dialogs'
 import { FolderIcon, LeafIcon, NewFolderIcon } from './components/icons'
 import { Workspace } from './components/Workspace'
 
@@ -11,6 +11,7 @@ export default function App() {
   const [recent, setRecent] = useState<RecentProject[]>([])
   const [ready, setReady] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [pickTemplate, setPickTemplate] = useState(false)
 
   const run = useCallback(async (fn: () => Promise<ProjectInfo | null>) => {
     try {
@@ -39,7 +40,7 @@ export default function App() {
         // While a project is open the workspace handles these, after saving its edits.
         if (project) return
         if (cmd === 'open-project') void run(() => api.openProjectDialog())
-        if (cmd === 'new-project') void run(() => api.newProjectDialog())
+        if (cmd === 'new-project') setPickTemplate(true)
       }),
     [project, run]
   )
@@ -47,7 +48,11 @@ export default function App() {
   const leave = useCallback(
     async (next: 'home' | 'open' | 'new') => {
       if (next === 'open' && !(await run(() => api.openProjectDialog()))) return
-      if (next === 'new' && !(await run(() => api.newProjectDialog()))) return
+      if (next === 'new') {
+        // The template dialog creates the project; the current workspace stays until then.
+        setPickTemplate(true)
+        return
+      }
       if (next === 'home') {
         await api.closeProject()
         setProject(null)
@@ -58,7 +63,23 @@ export default function App() {
     [run]
   )
 
-  if (project) return <Workspace key={project.root} initial={project} onLeave={leave} />
+  const templateDialog = pickTemplate && (
+    <TemplateDialog
+      onClose={() => setPickTemplate(false)}
+      onPick={async (id) => {
+        setPickTemplate(false)
+        if (await run(() => api.newProjectDialog(id))) setRecent(await api.getRecentProjects())
+      }}
+    />
+  )
+
+  if (project)
+    return (
+      <>
+        <Workspace key={project.root} initial={project} onLeave={leave} />
+        {templateDialog}
+      </>
+    )
   if (!ready) return <div className="welcome" />
 
   return (
@@ -73,7 +94,7 @@ export default function App() {
           </div>
         </div>
         <div className="welcome-actions">
-          <button className="btn btn-primary btn-lg" onClick={() => void run(() => api.newProjectDialog())}>
+          <button className="btn btn-primary btn-lg" onClick={() => setPickTemplate(true)}>
             <NewFolderIcon size={17} /> New project
           </button>
           <button className="btn btn-lg" onClick={() => void run(() => api.openProjectDialog())}>
@@ -81,6 +102,7 @@ export default function App() {
           </button>
         </div>
         {error && <p className="form-error">{error}</p>}
+        {templateDialog}
         <h3>Recent projects</h3>
         {recent.length === 0 ? (
           <p className="welcome-empty">Projects you open will appear here. Any folder with .tex files works.</p>

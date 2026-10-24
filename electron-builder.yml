@@ -6,6 +6,10 @@ directories:
 files:
   - out/**/*
   - package.json
+extraResources:
+  - from: resources/bin
+    to: bin
+    filter: ['**/*']
 mac:
   category: public.app-category.productivity
   target: dir
