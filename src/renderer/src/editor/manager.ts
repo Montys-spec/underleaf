@@ -5,6 +5,8 @@ import type { LogEntry } from '@shared/types'
 import type { LspDiagnostic } from '../lsp/texlab'
 import { baseExtensions, type EditorHooks } from './latex'
 import { refreshSpelling } from './spell'
+import { visualEditor } from './visual/visual'
+import type { ImageSource } from './visual/widgets'
 
 interface Doc {
   state: EditorState
@@ -30,6 +32,8 @@ const flashField = StateField.define<DecorationSet>({
 const LATEX_EXT = /\.(tex|sty|cls|ltx|dtx|bbx|cbx|tikz)$/i
 /** Each document holds its language-server connection in this compartment, so it can be attached later. */
 const lspCompartment = new Compartment()
+/** The visual editor layer, switched on and off for all LaTeX documents at once. */
+const visualCompartment = new Compartment()
 
 export interface ManagerCallbacks extends EditorHooks {
   onChange: (path: string, dirty: boolean) => void
@@ -50,6 +54,7 @@ export class EditorManager {
   private compileEntries: LogEntry[] = []
   private lspDiagnostics = new Map<string, LspDiagnostic[]>()
   private lspFor: (path: string) => Extension = () => []
+  private visual: Extension = []
 
   constructor(private callbacks: ManagerCallbacks) {
     const listener = EditorView.updateListener.of((u) => {
@@ -74,7 +79,7 @@ export class EditorManager {
         return true
       }
     })
-    const common = [flashField, listener, contextMenu, lspCompartment.of([])]
+    const common = [flashField, listener, contextMenu, lspCompartment.of([]), visualCompartment.of([])]
     this.latexExt = [...baseExtensions(callbacks, true), ...common]
     this.plainExt = [...baseExtensions(callbacks, false), ...common]
     this.view = new EditorView({ state: EditorState.create({ doc: '', extensions: this.latexExt }) })
@@ -96,7 +101,9 @@ export class EditorManager {
     if (!this.docs.has(path)) {
       const extensions = LATEX_EXT.test(path) ? this.latexExt : this.plainExt
       let state = EditorState.create({ doc: content, extensions })
-      state = state.update({ effects: lspCompartment.reconfigure(this.lspFor(path)) }).state
+      state = state.update({
+        effects: [lspCompartment.reconfigure(this.lspFor(path)), visualCompartment.reconfigure(LATEX_EXT.test(path) ? this.visual : [])]
+      }).state
       this.docs.set(path, { state, saved: content, scrollTop: 0 })
       this.refreshDiagnostics(path)
     }
@@ -184,6 +191,16 @@ export class EditorManager {
     for (const path of this.docs.keys()) {
       this.update(path, () => ({ effects: lspCompartment.reconfigure(this.lspFor(path)) }))
     }
+  }
+
+  /** Turns the visual editor on or off for every open LaTeX document. */
+  setVisual(enabled: boolean, images: ImageSource): void {
+    this.visual = enabled ? visualEditor(images) : []
+    for (const path of this.docs.keys()) {
+      if (!LATEX_EXT.test(path)) continue
+      this.update(path, () => ({ effects: visualCompartment.reconfigure(this.visual) }))
+    }
+    if (this.active) requestAnimationFrame(() => this.view.requestMeasure())
   }
 
   /** Shows compile errors and warnings as underlines and gutter markers in every open file. */

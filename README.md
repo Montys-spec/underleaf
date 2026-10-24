@@ -5,6 +5,10 @@ with your own TeX installation. No account, no subscription, your files stay whe
 
 ## Features
 
+- **Visual Editor, like Overleaf's.** Switch between *Code Editor* and *Visual Editor*: headings,
+  bold/italic, lists, math (KaTeX), figures (PNG, JPG, SVG and PDF), tables, citations and
+  cross-references render in place, while the file stays plain LaTeX. Click anything to edit its
+  source. A formatting toolbar inserts headings, lists, math, links, references, figures and tables.
 - **Projects are folders.** Open any folder, or start from a template: article, paper with
   bibliography, thesis with chapters, Beamer slides, problem set, letter.
 - **Compile like Overleaf.** `latexmk` with pdfLaTeX, XeLaTeX or LuaLaTeX; BibTeX/Biber run

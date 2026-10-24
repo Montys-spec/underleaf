@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 import type { EditorManager } from '../editor/manager'
 import { CloseIcon, fileIconFor } from './icons'
 
@@ -14,9 +14,11 @@ interface Props {
   onSelect: (path: string) => void
   onClose: (path: string) => void
   onReveal: (path: string) => void
+  /** Formatting toolbar, shown above LaTeX files. */
+  toolbar?: ReactNode
 }
 
-export function EditorPane({ manager, tabs, active, dirty, onSelect, onClose, onReveal }: Props) {
+export function EditorPane({ manager, tabs, active, dirty, onSelect, onClose, onReveal, toolbar }: Props) {
   const host = useRef<HTMLDivElement>(null)
   const isImage = !!active && IMAGE_EXT.test(active)
   const isBinary = !!active && BINARY_EXT.test(active)
@@ -57,6 +59,7 @@ export function EditorPane({ manager, tabs, active, dirty, onSelect, onClose, on
           )
         })}
       </div>
+      {toolbar && active?.endsWith('.tex') && toolbar}
       <div className="editor-body">
         <div ref={host} className="editor-host" style={{ display: active && !isImage && !isBinary ? 'block' : 'none' }} />
         {isImage && <ImagePreview path={active!} />}

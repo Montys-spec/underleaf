@@ -48,6 +48,14 @@ export const RefreshIcon = icon(<><path d="M20 11a8 8 0 1 0-2.3 5.7" /><path d="
 export const UpIcon = icon(<path d="M12 19V5M6 11l6-6 6 6" />)
 export const DownIcon = icon(<path d="M12 5v14M6 13l6 6 6-6" />)
 export const CheckIcon = icon(<path d="m5 12 5 5 9-10" />)
+export const UndoIcon = icon(<><path d="M9 14 4 9l5-5" /><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11" /></>)
+export const RedoIcon = icon(<><path d="m15 14 5-5-5-5" /><path d="M20 9H9.5a5.5 5.5 0 0 0 0 11H13" /></>)
+export const BulletListIcon = icon(<><path d="M9 6h11M9 12h11M9 18h11" /><circle cx="4.5" cy="6" r="1" /><circle cx="4.5" cy="12" r="1" /><circle cx="4.5" cy="18" r="1" /></>)
+export const NumberListIcon = icon(<><path d="M10 6h10M10 12h10M10 18h10" /><path d="M4 4.5h1.5V9M4 9h3M4 14.5c.6-.7 3-.8 2.6.9L4 19h3" /></>)
+export const LinkIcon = icon(<><path d="M10 14a4.5 4.5 0 0 0 6.4 0l3-3a4.5 4.5 0 0 0-6.4-6.4l-1 1" /><path d="M14 10a4.5 4.5 0 0 0-6.4 0l-3 3a4.5 4.5 0 0 0 6.4 6.4l1-1" /></>)
+export const TagIcon = icon(<><path d="M3 12V4h8l10 10-8 8z" /><circle cx="7.5" cy="8.5" r="1.3" /></>)
+export const QuoteIcon = icon(<><path d="M7 7H4v5h3v-1a4 4 0 0 1-3 4" /><path d="M17 7h-3v5h3v-1a4 4 0 0 1-3 4" /></>)
+export const TableIcon = icon(<><rect x="3" y="4" width="18" height="16" rx="2" /><path d="M3 10h18M3 15h18M9 4v16M15 4v16" /></>)
 export const LeafIcon = icon(<><path d="M5 19c0-8 5-14 15-15-1 10-7 15-15 15z" /><path d="M5 19 13 11" /></>)
 
 export function fileIconFor(name: string): (p: IconProps) => ReactElement {

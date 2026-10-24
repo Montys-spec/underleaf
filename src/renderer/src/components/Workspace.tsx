@@ -1,16 +1,20 @@
 import { findReferences, jumpToDefinition, renameSymbol, serverCompletionSource } from '@codemirror/lsp-client'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { findOutline, type OutlineItem } from '@shared/texScan'
+import { parseVisual } from '@shared/visualParse'
 import type { CompileResult, Compiler, FileNode, LogEntry, LspStatus, MenuCommand, ProjectInfo, ProjectSettings, ProjectSymbols } from '@shared/types'
 import { fallbackSource, snippetSource } from '../editor/completions'
 import { EditorManager } from '../editor/manager'
 import { forgetWord, ignoreWord, misspelledWordAt, proseSample } from '../editor/spell'
+import type { ImageSource } from '../editor/visual/widgets'
 import { TexlabClient } from '../lsp/texlab'
-import { getPrefs, setPrefs, type Prefs } from '../prefs'
+import { pdfToImageUrl } from '../pdf/thumbnail'
+import { getPrefs, setPrefs, usePrefs, type Prefs } from '../prefs'
 import { load, save } from '../storage'
 import { ContextMenu, type MenuItem, type MenuRequest } from './ContextMenu'
 import { ConfirmDialog, DiffDialog, errorMessage, PromptDialog, SettingsDialog, WordCountDialog, type ConfirmRequest, type PromptRequest } from './Dialogs'
 import { BINARY_EXT, EditorPane, IMAGE_EXT } from './EditorPane'
+import { EditorToolbar, type EditorMode } from './EditorToolbar'
 import { FileTree, parentDir } from './FileTree'
 import { GitPanel } from './GitPanel'
 import { FilesIcon, GitIcon, HomeIcon, LeafIcon, SearchIcon, SettingsIcon, TextIcon } from './icons'
@@ -33,6 +37,40 @@ interface Props {
 
 function joinPath(dir: string, name: string): string {
   return dir ? `${dir}/${name}` : name
+}
+
+const FIGURE_EXT = /\.(png|jpe?g|gif|svg|pdf|eps|webp)$/i
+// Folders LaTeX projects commonly keep figures in, tried when \graphicspath is not set.
+const FIGURE_DIRS = ['', 'figures/', 'figs/', 'images/', 'img/', 'graphics/', 'pictures/', 'plots/']
+
+function flatten(nodes: FileNode[], out: string[] = []): string[] {
+  for (const n of nodes) {
+    if (n.type === 'dir') flatten(n.children ?? [], out)
+    else out.push(n.path)
+  }
+  return out
+}
+
+/** `target` written relative to directory `from` (both project-relative). */
+function relativeTo(from: string, target: string): string {
+  if (!from) return target
+  const a = from.split('/')
+  const b = target.split('/')
+  while (a.length && b.length > 1 && a[0] === b[0]) {
+    a.shift()
+    b.shift()
+  }
+  return [...a.map(() => '..'), ...b].join('/')
+}
+
+function joinNormal(dir: string, rel: string): string {
+  const out: string[] = []
+  for (const seg of [...dir.split('/'), ...rel.split('/')]) {
+    if (!seg || seg === '.') continue
+    if (seg === '..') out.pop()
+    else out.push(seg)
+  }
+  return out.join('/')
 }
 
 function treeHas(nodes: FileNode[], path: string): boolean {
@@ -70,6 +108,7 @@ export function Workspace({ initial, onLeave }: Props) {
   const [searchFocus, setSearchFocus] = useState(0)
   const [gitRefresh, setGitRefresh] = useState(0)
   const [lspStatus, setLspStatus] = useState<LspStatus>({ available: false, error: 'Starting texlab…' })
+  const prefs = usePrefs()
 
   const bodyRef = useRef<HTMLDivElement>(null)
   const compilingRef = useRef(false)
@@ -80,6 +119,56 @@ export function Workspace({ initial, onLeave }: Props) {
   const symbolsRef = useRef<ProjectSymbols | null>(null)
   // Detected spelling language per open file (when the preference is "auto").
   const spellLangs = useRef(new Map<string, string | null>())
+  const filesRef = useRef<string[]>(flatten(initial.tree))
+  filesRef.current = flatten(info.tree)
+  const mainDirRef = useRef(parentDir(initial.settings.mainFile))
+  mainDirRef.current = parentDir(info.settings.mainFile)
+  const graphicsPaths = useRef<string[]>([])
+  const imageCache = useRef(new Map<string, Promise<string | null>>())
+
+  // Loads figures for the visual editor the way LaTeX finds them: relative to the main
+  // document, through \graphicspath, with or without a file extension.
+  const images = useMemo<ImageSource>(
+    () => ({
+      load: (path) => {
+        const cached = imageCache.current.get(path)
+        if (cached) return cached
+        const files = new Set(filesRef.current)
+        const dirs = [...graphicsPaths.current, ...FIGURE_DIRS]
+        let found: string | null = null
+        for (const dir of dirs) {
+          const base = joinNormal(mainDirRef.current, dir + path)
+          for (const ext of ['', '.pdf', '.png', '.jpg', '.jpeg', '.svg']) {
+            if (files.has(base + ext)) {
+              found = base + ext
+              break
+            }
+          }
+          if (found) break
+        }
+        const promise = found
+          ? api.readBinary(found).then((bytes) => {
+              if (/\.pdf$/i.test(found!)) return pdfToImageUrl(bytes)
+              if (/\.eps$/i.test(found!)) return null
+              const type = /\.svg$/i.test(found!) ? 'image/svg+xml' : ''
+              return URL.createObjectURL(new Blob([bytes as BlobPart], { type }))
+            })
+          : Promise.resolve(null)
+        imageCache.current.set(path, promise)
+        return promise
+      }
+    }),
+    []
+  )
+
+  const setEditorMode = useCallback(
+    (mode: EditorMode) => {
+      setPrefs({ editorMode: mode })
+      manager.setVisual(mode === 'visual', images)
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [images]
+  )
   const texlabRef = useRef<TexlabClient | null>(null)
   const tabsRef = useRef<string[]>([])
   tabsRef.current = tabs
@@ -518,6 +607,11 @@ export function Workspace({ initial, onLeave }: Props) {
   // ---- Lifecycle -------------------------------------------------------------------------
 
   useEffect(() => {
+    if (getPrefs().editorMode === 'visual') manager.setVisual(true, images)
+    api
+      .readFile(initial.settings.mainFile)
+      .then((text) => (graphicsPaths.current = parseVisual(text).graphicsPaths))
+      .catch(() => {})
     // Restore the tabs from the last session, or start with the main document.
     const saved = load<string[]>(`tabs:${initial.root}`, []).filter((t) => treeHas(initial.tree, t))
     const activeSaved = load<string | null>(`active:${initial.root}`, null)
@@ -583,6 +677,8 @@ export function Workspace({ initial, onLeave }: Props) {
   useEffect(
     () =>
       api.onFsChange(async (e) => {
+        // Figures may have been replaced; reload them next time they are shown.
+        imageCache.current.clear()
         if (e.kind === 'file') {
           if (manager.has(e.path)) manager.reloadFromDisk(e.path, await api.readFile(e.path).catch(() => ''))
           setGitRefresh((n) => n + 1)
@@ -804,6 +900,22 @@ export function Workspace({ initial, onLeave }: Props) {
           onSelect={(p) => void openFile(p)}
           onClose={(p) => void closeTabs([p])}
           onReveal={(p) => void api.revealInFinder(p)}
+          toolbar={
+            <EditorToolbar
+              view={manager.view}
+              mode={prefs.editorMode}
+              cursorLine={cursorLine}
+              images={filesRef.current.filter((f) => FIGURE_EXT.test(f)).map((f) => relativeTo(mainDirRef.current, f))}
+              onModeChange={setEditorMode}
+              onUploadImage={async () => {
+                const dir = filesRef.current.some((f) => f.startsWith('figures/')) ? 'figures' : mainDirRef.current
+                const added = await api.importFiles(dir).catch((err) => (showError(err), [] as string[]))
+                if (!added.length) return null
+                await refresh()
+                return relativeTo(mainDirRef.current, added[0])
+              }}
+            />
+          }
         />
         <Splitter onDrag={dragEditor} onDoubleClick={() => setEditorFrac(0.5)} />
         <PdfPane

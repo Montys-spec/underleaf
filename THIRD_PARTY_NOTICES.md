@@ -22,6 +22,7 @@ official release from https://github.com/latex-lsp/texlab/releases/tag/v5.26.0.
 | React, React DOM | MIT |
 | CodeMirror 6 (`@codemirror/*`) and Lezer | MIT |
 | PDF.js (`pdfjs-dist`) | Apache-2.0 |
+| KaTeX (math rendering in the Visual Editor) | MIT |
 
 Underleaf does not include a TeX distribution. Compiling uses the MacTeX installation on the
 user's computer.

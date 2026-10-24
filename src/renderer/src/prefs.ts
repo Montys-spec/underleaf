@@ -12,9 +12,11 @@ export interface Prefs {
   spellLanguage: string
   /** chktex style hints through texlab. */
   styleHints: boolean
+  /** Code editor shows plain LaTeX; the visual editor renders it in place. */
+  editorMode: 'code' | 'visual'
 }
 
-const DEFAULTS: Prefs = { theme: 'system', fontSize: 13.5, autoCompile: true, spellCheck: true, spellLanguage: 'auto', styleHints: false }
+const DEFAULTS: Prefs = { theme: 'system', fontSize: 13.5, autoCompile: true, spellCheck: true, spellLanguage: 'auto', styleHints: false, editorMode: 'code' }
 
 let current: Prefs = { ...DEFAULTS, ...load<Partial<Prefs>>('prefs', {}) }
 const listeners = new Set<() => void>()

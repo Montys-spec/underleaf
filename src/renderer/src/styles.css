@@ -1598,3 +1598,434 @@ code {
 .cm-tooltip-hover .cm-lsp-documentation pre {
   white-space: pre-wrap;
 }
+
+/* ---- Editor toolbar ----------------------------------------------------------------------- */
+
+.editor-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 40px;
+  padding: 0 8px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg);
+  flex-shrink: 0;
+  overflow-x: auto;
+  overflow-y: visible;
+}
+.editor-toolbar::-webkit-scrollbar {
+  height: 0;
+}
+.mode-switch {
+  display: flex;
+  padding: 2px;
+  border-radius: 7px;
+  background: var(--bg-sunken);
+  flex-shrink: 0;
+}
+.mode-switch button {
+  padding: 4px 10px;
+  border: 0;
+  border-radius: 5px;
+  background: none;
+  color: var(--text-muted);
+  font-size: 12px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.mode-switch button.active {
+  background: var(--bg);
+  color: var(--text);
+  font-weight: 600;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.14);
+}
+.tb-group {
+  display: flex;
+  align-items: center;
+  gap: 1px;
+  padding-left: 6px;
+  border-left: 1px solid var(--border);
+  flex-shrink: 0;
+}
+.tb-btn {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border: 0;
+  border-radius: 5px;
+  background: none;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+.tb-btn:hover,
+.tb-btn.active {
+  background: var(--bg-sunken);
+  color: var(--text);
+}
+.tb-text {
+  font: 15px Georgia, 'Times New Roman', serif;
+}
+.tb-math {
+  font-family: 'KaTeX_Main', Georgia, serif;
+  font-style: italic;
+}
+.tb-select {
+  height: 28px;
+  padding: 0 6px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: var(--bg);
+  color: var(--text);
+  font-size: 12px;
+}
+.tb-popover-anchor {
+  position: relative;
+}
+.tb-popover {
+  position: fixed;
+  z-index: 45;
+  margin-top: 34px;
+  min-width: 230px;
+  padding: 4px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg);
+  box-shadow: var(--shadow);
+}
+.tb-popover .hint {
+  padding: 4px 10px;
+}
+.figure-list {
+  max-height: 260px;
+  overflow: auto;
+}
+.figure-list .menu-item {
+  font-family: var(--mono);
+  font-size: 12px;
+}
+.tb-popover .menu-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.table-grid {
+  display: grid;
+  grid-template-columns: repeat(8, 18px);
+  gap: 3px;
+  padding: 6px 10px 10px;
+}
+.table-grid button {
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: 1px solid var(--border-strong);
+  border-radius: 3px;
+  background: var(--bg);
+  cursor: pointer;
+}
+.table-grid button.on {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+/* ---- Visual editor ------------------------------------------------------------------------ */
+
+.cm-visual {
+  --visual-font: -apple-system, BlinkMacSystemFont, 'Helvetica Neue', sans-serif;
+  --visual-sans: -apple-system, BlinkMacSystemFont, 'Helvetica Neue', sans-serif;
+}
+.cm-visual .cm-scroller {
+  font-family: var(--visual-font);
+  line-height: 1.7;
+}
+.cm-visual .cm-content {
+  max-width: 820px;
+  margin: 0 auto;
+  padding: 24px 36px 160px;
+  font-size: calc(var(--editor-font-size, 13.5px) + 2px);
+}
+.cm-visual .cm-gutters {
+  display: none;
+}
+.cm-visual .cm-activeLine {
+  background: transparent;
+}
+.cm-v-h {
+  font-weight: 700;
+  line-height: 1.3;
+  padding-top: 0.7em !important;
+  padding-bottom: 0.2em !important;
+}
+.cm-v-h0 {
+  font-size: 2em;
+}
+.cm-v-h1 {
+  font-size: 1.75em;
+}
+.cm-v-h2 {
+  font-size: 1.42em;
+}
+.cm-v-h3 {
+  font-size: 1.2em;
+}
+.cm-v-h4 {
+  font-size: 1.07em;
+}
+.cm-v-h5,
+.cm-v-h6 {
+  font-size: 1em;
+}
+.cm-v-h .cm-v-chip {
+  font-size: 0.55em;
+  vertical-align: middle;
+}
+.cm-v-bold {
+  font-weight: 700;
+}
+.cm-v-italic,
+.cm-v-emph {
+  font-style: italic;
+}
+.cm-v-underline {
+  text-decoration: underline;
+}
+.cm-v-strike {
+  text-decoration: line-through;
+}
+.cm-v-mono {
+  font-family: var(--mono);
+  font-size: 0.9em;
+  padding: 0 2px;
+  border-radius: 3px;
+  background: var(--bg-sunken);
+}
+.cm-v-smallcaps {
+  font-variant: small-caps;
+}
+.cm-v-sans {
+  font-family: var(--visual-sans);
+}
+.cm-v-link {
+  color: var(--info);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.cm-v-footnote {
+  font-size: 0.86em;
+  color: var(--text-muted);
+}
+.cm-v-footnote-mark {
+  margin: 0 4px 0 2px;
+  padding: 0 4px;
+  border-radius: 3px;
+  background: var(--info-soft);
+  color: var(--info);
+  font: 600 0.62em var(--visual-font);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  vertical-align: 0.3em;
+}
+.cm-v-chip {
+  display: inline-block;
+  padding: 0 7px;
+  border-radius: 10px;
+  font: 500 0.8em/1.6 var(--visual-font);
+  vertical-align: 0.06em;
+  cursor: pointer;
+}
+.cm-v-ref {
+  background: var(--info-soft);
+  color: var(--info);
+}
+.cm-v-ref::before {
+  content: '→ ';
+}
+.cm-v-cite {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+.cm-v-cite::before {
+  content: '[';
+}
+.cm-v-cite::after {
+  content: ']';
+}
+.cm-v-label {
+  background: var(--bg-sunken);
+  color: var(--text-muted);
+}
+.cm-v-label::before {
+  content: '# ';
+}
+.cm-v-math-inline {
+  cursor: pointer;
+}
+.cm-v-math-display {
+  display: block;
+  padding: 6px 0;
+  text-align: center;
+  cursor: pointer;
+}
+.cm-v-math-display .katex-display,
+.cm-v-math-preview .katex-display {
+  margin: 0;
+}
+.cm-v-math-source {
+  font-family: var(--mono);
+  font-size: 0.88em;
+}
+.cm-v-math-preview {
+  margin: 4px 0 10px;
+  padding: 8px;
+  border: 1px dashed var(--border-strong);
+  border-radius: 6px;
+  background: var(--bg-subtle);
+  text-align: center;
+}
+.cm-v-math-error {
+  color: var(--error);
+  font-family: var(--mono);
+}
+.cm-v-li {
+  padding-left: calc(var(--v-depth, 1) * 1.7em) !important;
+}
+.cm-v-bullet {
+  display: inline-block;
+  min-width: 1.5em;
+  margin-left: -1.5em;
+  color: var(--text-muted);
+}
+.cm-v-bullet.custom {
+  color: var(--text);
+}
+.cm-v-env-label {
+  padding: 8px 0 2px;
+  font-weight: 700;
+  cursor: pointer;
+}
+.cm-v-env-title {
+  font-weight: 400;
+  font-style: italic;
+}
+.cm-v-env-abstract.cm-v-env-label {
+  text-align: center;
+  font-variant: small-caps;
+  letter-spacing: 0.06em;
+}
+.cm-v-env-body {
+  border-left: 3px solid var(--border-strong);
+  padding-left: 14px !important;
+}
+.cm-v-env-body.cm-v-env-abstract {
+  border-left: 0;
+  padding: 0 2.5em !important;
+  font-size: 0.95em;
+}
+.cm-v-env-source {
+  color: var(--text-faint);
+}
+.cm-v-titleblock {
+  padding: 18px 0 16px;
+  text-align: center;
+  cursor: pointer;
+}
+.cm-v-title {
+  font-size: 1.9em;
+  font-weight: 700;
+  line-height: 1.25;
+}
+.cm-v-author {
+  margin-top: 10px;
+  font-size: 1.1em;
+}
+.cm-v-date {
+  margin-top: 4px;
+  color: var(--text-muted);
+}
+.cm-v-dim {
+  color: var(--text-faint);
+  font-weight: 400;
+  font-size: 0.6em;
+}
+.cm-v-preamble {
+  margin: 0 0 14px;
+  padding: 6px 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-subtle);
+  color: var(--text-muted);
+  font: 12px var(--visual-font);
+  cursor: pointer;
+  user-select: none;
+}
+.cm-v-preamble:hover {
+  color: var(--text);
+}
+.cm-v-preamble.open {
+  margin-bottom: 4px;
+}
+.cm-v-preamble-line {
+  font-family: var(--mono);
+  font-size: 0.82em;
+  background: var(--bg-subtle);
+}
+.cm-v-float,
+.cm-v-table-wrap {
+  margin: 10px 0;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  text-align: center;
+  cursor: pointer;
+}
+.cm-v-float:hover,
+.cm-v-table-wrap:hover {
+  border-color: var(--border-strong);
+}
+.cm-v-float-media {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 10px;
+}
+.cm-v-image {
+  display: inline-block;
+  max-width: 100%;
+}
+.cm-v-image img {
+  max-width: 100%;
+  max-height: 440px;
+  border-radius: 3px;
+  background: #fff;
+}
+.cm-v-image-missing {
+  padding: 18px;
+  border: 1px dashed var(--border-strong);
+  border-radius: 6px;
+  color: var(--text-muted);
+  font-size: 0.85em;
+}
+.cm-v-float figcaption {
+  margin: 8px 0 2px;
+  font-size: 0.92em;
+}
+.cm-v-table {
+  margin: 4px auto;
+  border-collapse: collapse;
+  font-size: 0.95em;
+}
+.cm-v-table td {
+  padding: 3px 14px;
+  text-align: left;
+}
+.cm-v-table tr.rule-above td {
+  border-top: 1px solid var(--text-muted);
+}
+.cm-v-table tr.rule-below td {
+  border-bottom: 1px solid var(--text-muted);
+}
+.cm-v-caption-label {
+  font-weight: 700;
+  color: var(--text-muted);
+}
