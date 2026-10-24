@@ -1,0 +1,17 @@
+appId: dev.underleaf.app
+productName: Underleaf
+directories:
+  buildResources: build
+  output: dist
+files:
+  - out/**/*
+  - package.json
+mac:
+  category: public.app-category.productivity
+  target: dir
+  identity: null
+  extendInfo:
+    CFBundleDocumentTypes:
+      - CFBundleTypeName: Folder
+        CFBundleTypeRole: Editor
+        LSItemContentTypes: [public.folder]
