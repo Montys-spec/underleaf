@@ -1,7 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { blockExclusions, proseWords } from '../src/shared/spellScan.ts'
-import { compileHints, findLabels, findOutline, parseBibEntries, plainTitle } from '../src/shared/texScan.ts'
+import { compileHints, documentLanguage, findLabels, findOutline, parseBibEntries, plainTitle } from '../src/shared/texScan.ts'
 
 const words = (line: string) => proseWords(line).map(([s, e]) => line.slice(s, e))
 
@@ -53,4 +53,13 @@ test('compile hints read magic comments, standalone documents and engine-only pa
   assert.deepEqual(compileHints('\\documentclass{article}\n\\usepackage[ngerman]{babel}\n\\usepackage{fontspec}'), { needsUnicodeEngine: true, standalone: true })
   assert.deepEqual(compileHints('% \\documentclass{article}\n% \\usepackage{fontspec}\nText'), { standalone: false })
   assert.deepEqual(compileHints('%!TeX TS-program = LuaLaTeX\n\\documentclass{article}\n\\usepackage{fontspec}'), { engine: 'lualatex', needsUnicodeEngine: true, standalone: true })
+})
+
+test('document language comes from babel or polyglossia', () => {
+  assert.equal(documentLanguage('\\documentclass{article}\n\\usepackage[british]{babel}\n\\begin{document}'), 'en_GB')
+  assert.equal(documentLanguage('\\usepackage[ngerman,provide=*]{babel}'), 'de')
+  assert.equal(documentLanguage('\\usepackage[english,ngerman]{babel}'), 'de')
+  assert.equal(documentLanguage('\\usepackage[ngerman,main=english]{babel}'), 'en')
+  assert.equal(documentLanguage('\\usepackage{polyglossia}\n\\setdefaultlanguage[variant=british]{english}'), 'en')
+  assert.equal(documentLanguage('% \\usepackage[french]{babel}\n\\documentclass{article}'), null)
 })

@@ -26,6 +26,11 @@ export type VNode =
   | { kind: 'float'; name: string; from: number; to: number; bodyFrom: number; bodyTo: number }
   | { kind: 'table'; from: number; to: number; rows: TableRow[] }
   | { kind: 'maketitle'; from: number; to: number }
+  | { kind: 'comment'; from: number; to: number; text: string }
+  /** Spacing and line-breaking commands: \vspace, \par, \\, \hfill. They have no text of their own. */
+  | { kind: 'layout'; from: number; to: number; effect?: 'right' | 'pagebreak' }
+  /** A brace group opened by declarations: {\bfseries\large Name}. */
+  | { kind: 'styled'; from: number; to: number; contentFrom: number; contentTo: number; styles: FormatStyle[]; size?: number }
 
 export interface TableCell {
   tex: string
@@ -109,7 +114,51 @@ const SYMBOLS: Record<string, string> = {
   oe: 'œ',
   OE: 'Œ',
   euro: '€',
-  pounds: '£'
+  pounds: '£',
+  textbar: '|',
+  textbullet: '•',
+  textperiodcentered: '·',
+  textellipsis: '…',
+  textquoteleft: '‘',
+  textquoteright: '’',
+  textquotedblleft: '“',
+  textquotedblright: '”',
+  textless: '<',
+  textgreater: '>',
+  textasciicircum: '^',
+  textunderscore: '_',
+  textdegree: '°',
+  quad: '\u2003',
+  qquad: '\u2003\u2003',
+  enspace: '\u2002',
+  thinspace: '\u2009'
+}
+
+/** Escaped characters and the short spacing macros \, \; \! and friends. */
+const ESCAPES: Record<string, string> = { '%': '%', '&': '&', '#': '#', $: '$', _: '_', '{': '{', '}': '}', ',': '\u2009', ';': '\u2005', ':': '\u2005', ' ': ' ', '!': '', '-': '', '/': '', '@': '' }
+
+/** Commands that only move things around on the page. Values are their number of brace arguments. */
+const LAYOUT: Record<string, number> = {
+  vspace: 1, hspace: 1, addvspace: 1, enlargethispage: 1, thispagestyle: 1, pagestyle: 1, setlength: 2, addtolength: 2,
+  par: 0, noindent: 0, indent: 0, smallskip: 0, medskip: 0, bigskip: 0, hfill: 0, vfill: 0, hfil: 0, vfil: 0,
+  newline: 0, linebreak: 0, nolinebreak: 0, nopagebreak: 0, centering: 0, raggedright: 0, raggedleft: 0,
+  selectfont: 0, normalsize: 0, relax: 0, null: 0, break: 0, newpage: 0, clearpage: 0, cleardoublepage: 0, pagebreak: 0
+}
+const PAGE_BREAKS = new Set(['newpage', 'clearpage', 'cleardoublepage', 'pagebreak'])
+
+/** Font declarations that may open a brace group, and how they look. */
+const DECLARATIONS: Record<string, FormatStyle | null> = {
+  bfseries: 'bold', bf: 'bold', itshape: 'italic', it: 'italic', slshape: 'italic', sl: 'italic', em: 'emph',
+  scshape: 'smallcaps', sc: 'smallcaps', ttfamily: 'mono', tt: 'mono', sffamily: 'sans', sf: 'sans',
+  mdseries: null, upshape: null, normalfont: null, rmfamily: null, selectfont: null, normalsize: null,
+  centering: null, raggedright: null, raggedleft: null
+}
+/** LaTeX's size commands relative to the body text size. */
+const SIZES: Record<string, number> = { tiny: 0.5, scriptsize: 0.7, footnotesize: 0.8, small: 0.9, large: 1.2, Large: 1.44, LARGE: 1.73, huge: 2.07, Huge: 2.49 }
+
+/** Today's date as \today prints it in English documents. */
+function today(): string {
+  return new Date().toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' })
 }
 
 /** Index just past a balanced group starting at `start` (which must hold `open`), or -1. */
@@ -302,6 +351,41 @@ function toCell(raw: string): TableCell {
   return { tex, span: 1 }
 }
 
+/** Reads `{\bfseries\large ...}`: a group that opens with font declarations. */
+function readDeclarations(text: string, open: number, baseSize: number): Extract<VNode, { kind: 'styled' }> | null {
+  const end = groupEnd(text, open)
+  if (end === -1) return null
+  const styles: FormatStyle[] = []
+  let size: number | undefined
+  let i = open + 1
+  let found = false
+  for (;;) {
+    const ws = /^\s*/.exec(text.slice(i, i + 200))![0].length
+    const m = /^\\([A-Za-z]+)\b\s*/.exec(text.slice(i + ws, i + ws + 40))
+    if (!m) break
+    const name = m[1]
+    let to = i + ws + m[0].length
+    if (name in DECLARATIONS) {
+      const style = DECLARATIONS[name]
+      if (style && !styles.includes(style)) styles.push(style)
+    } else if (name in SIZES) {
+      size = SIZES[name]
+    } else if (name === 'fontsize') {
+      const a = readArgs(text, to, 2, 0)
+      if (!a) break
+      const pt = parseFloat(text.slice(a.args[0].from, a.args[0].to))
+      if (pt > 0) size = pt / baseSize
+      to = a.end
+    } else break
+    found = true
+    i = to
+  }
+  if (!found) return null
+  // Text starts after the declarations and the space that ends them.
+  const contentFrom = i + (/^\s*/.exec(text.slice(i, i + 200))![0].length)
+  return { kind: 'styled', from: open, to: end, contentFrom: Math.min(contentFrom, end - 1), contentTo: end - 1, styles, size }
+}
+
 export function parseVisual(text: string): VisualDoc {
   const doc: VisualDoc = { nodes: [], preamble: null, macros: {}, graphicsPaths: [] }
   const nodes = doc.nodes
@@ -319,6 +403,8 @@ export function parseVisual(text: string): VisualDoc {
     parsePreamble(text, doc, 0, n)
   }
 
+  // {\fontsize{16}{19}\selectfont ...} sizes are relative to the class's body size.
+  const baseSize = Number(/\\documentclass\s*\[[^\]]*?\b(1[012])pt\b/.exec(text.slice(0, start || 2000))?.[1] ?? 10)
   const lists: { kind: ListKind; count: number }[] = []
   const floats: { name: string; from: number; bodyFrom: number }[] = []
 
@@ -327,7 +413,16 @@ export function parseVisual(text: string): VisualDoc {
     const c = text[i]
 
     if (c === '%') {
-      i = lineEnd(text, i)
+      const to = lineEnd(text, i)
+      nodes.push({ kind: 'comment', from: i, to, text: text.slice(i + 1, to) })
+      i = to
+      continue
+    }
+
+    if (c === '{') {
+      const styled = readDeclarations(text, i, baseSize)
+      if (styled) nodes.push(styled)
+      i = styled ? styled.contentFrom : i + 1
       continue
     }
 
@@ -360,9 +455,22 @@ export function parseVisual(text: string): VisualDoc {
         } else i += 2
         continue
       }
+      if (next === '\\') {
+        // \\, \\*, \\[4pt]: the line ends in the source anyway.
+        let to = i + 2
+        if (text[to] === '*') to++
+        const opt = /^[ \t]*\[[^\]\n]*\]/.exec(text.slice(to, to + 40))
+        if (opt) to += opt[0].length
+        nodes.push({ kind: 'layout', from: i, to })
+        i = to
+        continue
+      }
       const name = /^[A-Za-z@]+\*?/.exec(text.slice(i + 1, i + 40))?.[0]
       if (!name) {
-        if (next && '%&#$_{}'.includes(next)) nodes.push({ kind: 'symbol', from: i, to: i + 2, text: next })
+        if (next && next in ESCAPES) {
+          if (ESCAPES[next]) nodes.push({ kind: 'symbol', from: i, to: i + 2, text: ESCAPES[next] })
+          else nodes.push({ kind: 'layout', from: i, to: i + 2 })
+        }
         i += 2
         continue
       }
@@ -531,13 +639,25 @@ export function parseVisual(text: string): VisualDoc {
             continue
           }
         }
-      } else if (base in SYMBOLS) {
+      } else if (base in SYMBOLS || base === 'today') {
         // \LaTeX{} and \LaTeX\ both end the macro.
         let to = after
         if (text.startsWith('{}', to)) to += 2
-        nodes.push({ kind: 'symbol', from: i, to, text: SYMBOLS[base] })
+        nodes.push({ kind: 'symbol', from: i, to, text: base === 'today' ? today() : SYMBOLS[base] })
         i = to
         continue
+      } else if (base in LAYOUT) {
+        const a = LAYOUT[base] ? readArgs(text, after, LAYOUT[base], 1) : null
+        let to = a ? a.end : after
+        if (!LAYOUT[base] && text.startsWith('{}', to)) to += 2
+        if (!LAYOUT[base] || a) {
+          // \hfill before any text on its line pushes the line to the right margin.
+          const lineStart = text.lastIndexOf('\n', i - 1) + 1
+          const effect = PAGE_BREAKS.has(base) ? 'pagebreak' : base === 'hfill' && text.slice(lineStart, i).trim() === '' ? 'right' : undefined
+          nodes.push({ kind: 'layout', from: i, to, effect })
+          i = to
+          continue
+        }
       }
       i = after
       continue

@@ -1,6 +1,6 @@
 import { findReferences, jumpToDefinition, renameSymbol, serverCompletionSource } from '@codemirror/lsp-client'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { findOutline, type OutlineItem } from '@shared/texScan'
+import { documentLanguage, findOutline, type OutlineItem } from '@shared/texScan'
 import { parseVisual } from '@shared/visualParse'
 import type { CompileResult, Compiler, FileNode, LogEntry, LspStatus, MenuCommand, ProjectInfo, ProjectSettings, ProjectSymbols } from '@shared/types'
 import { fallbackSource, snippetSource } from '../editor/completions'
@@ -653,12 +653,13 @@ export function Workspace({ initial, onLeave }: Props) {
     actions.current.outlineChanged()
     // Detect the language of a newly opened document once, for spell checking.
     if (active?.endsWith('.tex') && !spellLangs.current.has(active) && getPrefs().spellLanguage === 'auto') {
-      const sample = proseSample(manager.content(active) ?? '')
-      api
-        .spellDetect(sample)
-        .catch(() => null)
+      const content = manager.content(active) ?? ''
+      const sample = proseSample(content)
+      // A language the document declares (babel, polyglossia) beats guessing from its text.
+      const declared = documentLanguage(content)
+      ;(declared ? Promise.resolve(declared) : api.spellDetect(sample).catch(() => null))
         .then((lang) => {
-          spellLangs.current.set(active, sample.split(' ').length >= 5 ? lang : null)
+          spellLangs.current.set(active, declared ?? (sample.split(' ').length >= 5 ? lang : null))
           if (activeRef.current === active) manager.refreshSpelling()
         })
     }

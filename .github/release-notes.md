@@ -1,3 +1,11 @@
+## What's new in 0.4.0
+
+- **Nicer Visual Editor for letters and CVs.** Font groups like `{\bfseries\large Name}` show bold and at the right size, spacing commands (`\vspace`, `\\`, `\par`) disappear, `\hfill` right-aligns a line, and comments become quiet notes instead of raw code.
+- **Compiles the document you have open** when it's complete on its own, so a folder of cover letters just works. `% !TEX program = xelatex` is followed, and files that use `fontspec` switch to XeLaTeX automatically.
+- **Saves the PDF next to your .tex file** after each compile without errors (can be switched off beside Recompile).
+- **Spell checking uses the document's language** from babel or polyglossia, so English letters on a German Mac are no longer underlined everywhere.
+- **Faster builds with system fonts:** TeX no longer tries to generate fonts such as Calibri, which took many seconds and could leave junk folders behind.
+
 ## Install
 
 Works on macOS 11 or newer, on both Intel and Apple-chip Macs.

@@ -5,6 +5,7 @@ import { renderInline } from './render'
 import {
   BulletWidget,
   ChipWidget,
+  CommentWidget,
   EnvWidget,
   type FloatContent,
   FloatWidget,
@@ -12,6 +13,7 @@ import {
   ImageWidget,
   type ImageSource,
   MathWidget,
+  PageBreakWidget,
   PreambleWidget,
   TableWidget,
   TextWidget,
@@ -104,6 +106,24 @@ function build(state: EditorState, parse: VisualDoc, preambleOpen: boolean, imag
       ranges.push(Decoration.widget({ widget: new PreambleWidget(lastLine.number, true, toggle), block: true, side: -1 }).range(0))
       for (let l = 1; l <= lastLine.number; l++) ranges.push(Decoration.line({ class: 'cm-v-preamble-line' }).range(doc.line(l).from))
     }
+  }
+
+  // Lines holding only spacing commands (\vspace{10pt}, \par) shrink to a small gap.
+  const quiet = new Map<number, VNode[]>()
+  for (const node of parse.nodes) {
+    if (node.from < skipUntil || (node.kind !== 'layout' && node.kind !== 'comment')) continue
+    const ln = doc.lineAt(node.from).number
+    quiet.set(ln, [...(quiet.get(ln) ?? []), node])
+  }
+  const gapLines = new Set<number>()
+  for (const [ln, onLine] of quiet) {
+    const line = doc.line(ln)
+    if (onLine.some((n) => n.kind !== 'layout' || n.effect === 'pagebreak')) continue
+    let rest = line.text
+    for (const n of [...onLine].sort((a, b) => b.from - a.from)) rest = rest.slice(0, n.from - line.from) + rest.slice(Math.min(n.to, line.to) - line.from)
+    if (rest.trim() !== '' || touched(line.from, line.to)) continue
+    gapLines.add(ln)
+    lineClass(line.from, 'cm-v-gap')
   }
 
   // Environments that are not lists or floats get a label and a left rule on their lines.
@@ -235,6 +255,35 @@ function build(state: EditorState, parse: VisualDoc, preambleOpen: boolean, imag
         } else {
           replace(node.from, node.to)
         }
+        break
+      }
+      case 'styled': {
+        const cls = node.styles.map((st) => `cm-v-${st}`).join(' ')
+        if (node.contentTo > node.contentFrom && (cls || node.size)) {
+          ranges.push(Decoration.mark({ class: cls, attributes: node.size ? { style: `font-size: ${node.size.toFixed(2)}em` } : undefined }).range(node.contentFrom, node.contentTo))
+        }
+        if (!isTouched) {
+          replace(node.from, node.contentFrom)
+          replace(node.contentTo, node.to)
+        }
+        break
+      }
+      case 'comment': {
+        const line = doc.lineAt(node.from)
+        if (touched(line.from, line.to)) {
+          ranges.push(Decoration.mark({ class: 'cm-v-comment-source' }).range(node.from, node.to))
+          break
+        }
+        const wholeLine = text(line.from, node.from).trim() === ''
+        if (wholeLine) lineClass(node.from, 'cm-v-comment-line')
+        replace(node.from, node.to, Decoration.replace({ widget: new CommentWidget(node.text, wholeLine, node.from) }))
+        break
+      }
+      case 'layout': {
+        if (node.effect === 'right') lineClass(node.from, 'cm-v-right')
+        const line = doc.lineAt(node.from)
+        if (gapLines.has(line.number)) replace(node.from, node.to)
+        else if (!isTouched) replace(node.from, node.to, node.effect === 'pagebreak' ? Decoration.replace({ widget: new PageBreakWidget(node.from) }) : hidden)
         break
       }
       case 'maketitle':

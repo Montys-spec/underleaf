@@ -372,6 +372,49 @@ export class PreambleWidget extends WidgetType {
   }
 }
 
+/**
+ * A LaTeX comment, drawn as a quiet note. Divider comments such as `% ---- Sender ----`
+ * become a small label; clicking shows the source.
+ */
+export class CommentWidget extends RevealWidget {
+  constructor(
+    readonly text: string,
+    readonly wholeLine: boolean,
+    revealAt: number
+  ) {
+    super(revealAt)
+  }
+
+  eq(other: CommentWidget): boolean {
+    return other.text === this.text && other.wholeLine === this.wholeLine
+  }
+
+  toDOM(view: EditorView): HTMLElement {
+    const el = document.createElement('span')
+    // Strip the %s and the runs of dashes, equals signs or stars that frame section comments.
+    const body = this.text.replace(/^%+/, '').trim()
+    const label = body.replace(/^[-=*#~_]{3,}\s*/, '').replace(/\s*[-=*#~_]{3,}$/, '').trim()
+    const divider = this.wholeLine && label !== body
+    el.className = `cm-v-comment${divider ? ' divider' : ''}${divider && !label ? ' rule' : ''}`
+    el.textContent = divider ? label : body
+    el.title = 'Comment (not printed)'
+    return this.attach(el, view)
+  }
+}
+
+export class PageBreakWidget extends RevealWidget {
+  eq(): boolean {
+    return true
+  }
+
+  toDOM(view: EditorView): HTMLElement {
+    const el = document.createElement('span')
+    el.className = 'cm-v-pagebreak'
+    el.textContent = 'Page break'
+    return this.attach(el, view)
+  }
+}
+
 export class FootnoteMarker extends WidgetType {
   eq(): boolean {
     return true

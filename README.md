@@ -7,13 +7,20 @@ with your own TeX installation. No account, no subscription, your files stay whe
 
 - **Visual Editor, like Overleaf's.** Switch between *Code Editor* and *Visual Editor*: headings,
   bold/italic, lists, math (KaTeX), figures (PNG, JPG, SVG and PDF), tables, citations and
-  cross-references render in place, while the file stays plain LaTeX. Click anything to edit its
-  source. A formatting toolbar inserts headings, lists, math, links, references, figures and tables.
+  cross-references render in place, while the file stays plain LaTeX. Letters and CVs read like the
+  page too: font groups such as `{\bfseries\large Name}` show bold and large, spacing commands
+  (`\vspace`, `\\`, `\par`) disappear, `\hfill` right-aligns a line and comments become quiet notes.
+  Click anything to edit its source. A formatting toolbar inserts headings, lists, math, links, references, figures and tables.
 - **Projects are folders.** Open any folder, or start from a template: article, paper with
   bibliography, thesis with chapters, Beamer slides, problem set, letter.
 - **Compile like Overleaf.** `latexmk` with pdfLaTeX, XeLaTeX or LuaLaTeX; BibTeX/Biber run
   automatically. Auto-compile after you stop typing, or press ⌘S / ⌘↵. "Recompile from scratch"
   clears the cache.
+- **A folder of documents works.** If the open file is a complete document (a CV, a cover letter),
+  Recompile builds that file; otherwise it builds the project's main file. `% !TEX program` and
+  `% !TEX root` are followed, and files that load `fontspec` switch to XeLaTeX on their own.
+- **The PDF lands next to your .tex file** after every compile without errors, ready to send.
+  Switch this off in the menu beside Recompile.
 - **Readable errors.** The TeX log becomes clickable cards (errors, warnings, bad boxes), and the
   lines are underlined in the editor.
 - **PDF viewer.** Zoom, selectable text, clickable links and cross-references, export, open in Preview.
@@ -22,8 +29,9 @@ with your own TeX installation. No account, no subscription, your files stay whe
   environments, `\ref` labels (with their numbers), `\cite` keys and file names; hover previews of
   citations and labels; go to definition (F12), find references (⇧F12), rename (F2), format
   (⇧⌥F); optional chktex style hints.
-- **Spell checking** with macOS dictionaries, LaTeX-aware (skips commands, math, labels), with the
-  language detected per document (e.g. English or German). Right-click for suggestions.
+- **Spell checking** with macOS dictionaries, LaTeX-aware (skips commands, math, labels), in each
+  document's language: the one it declares with babel or polyglossia, otherwise detected from its
+  text. Right-click for suggestions.
 - **File outline, project-wide search and replace, word count** (texcount).
 - **Source control.** Initialise a git repository, see changes and diffs, commit, push and pull.
 - **Light and dark themes**, following macOS by default.

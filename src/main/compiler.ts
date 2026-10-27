@@ -54,7 +54,12 @@ export class CompileRunner {
       // Stop TeX from wrapping log lines at 79 columns, which makes the log parseable.
       max_print_line: '10000',
       error_line: '254',
-      half_error_line: '238'
+      half_error_line: '238',
+      // Don't let TeX try to generate missing fonts. Checks such as \IfFontExistsTF{Calibri}
+      // otherwise run mktextfm, which takes many seconds per font and can drop junk
+      // folders into the project.
+      MKTEXTFM: '0',
+      MKTEXMF: '0'
     }
 
     let output = ''

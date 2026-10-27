@@ -43,16 +43,16 @@ export function misspelledWordAt(view: EditorView, pos: number, lang: string | n
   return null
 }
 
-/** A sample of the document's prose, for language detection. */
+/**
+ * A sample of the document's prose, for language detection: paragraph lines from the body.
+ * Short lines (addresses, names, headings) are skipped because they mislead the detector.
+ */
 export function proseSample(text: string, maxWords = 400): string {
-  const words: string[] = []
-  for (const line of text.split('\n')) {
-    for (const [s, e] of proseWords(line)) {
-      words.push(line.slice(s, e))
-      if (words.length >= maxWords) return words.join(' ')
-    }
-  }
-  return words.join(' ')
+  const begin = text.search(/\\begin\s*\{document\}/)
+  const lines = (begin === -1 ? text : text.slice(begin)).split('\n').map((line) => proseWords(line).map(([s, e]) => line.slice(s, e)))
+  const long = lines.filter((w) => w.length >= 8)
+  const words = (long.flat().length >= 20 ? long : lines).flat()
+  return words.slice(0, maxWords).join(' ')
 }
 
 export function spellChecker(isEnabled: () => boolean, getLang: LanguageGetter): Extension {

@@ -142,3 +142,32 @@ export function compileHints(text: string): CompileHints {
   if (/\\usepackage\s*(?:\[[^\]]*\])?\s*\{[^}]*\b(?:fontspec|unicode-math|polyglossia)\b/.test(code)) hints.needsUnicodeEngine = true
   return hints
 }
+
+const BABEL_LANG: Record<string, string> = {
+  english: 'en', american: 'en', usenglish: 'en', british: 'en_GB', ukenglish: 'en_GB', canadian: 'en_CA',
+  australian: 'en_AU', newzealand: 'en_NZ', german: 'de', ngerman: 'de', austrian: 'de', naustrian: 'de',
+  swissgerman: 'de', nswissgerman: 'de', french: 'fr', francais: 'fr', acadian: 'fr', spanish: 'es',
+  italian: 'it', dutch: 'nl', portuguese: 'pt_PT', portuges: 'pt_PT', brazilian: 'pt_BR', brazil: 'pt_BR',
+  swedish: 'sv', danish: 'da', norsk: 'nb', norwegian: 'nb', nynorsk: 'nn', finnish: 'fi', polish: 'pl',
+  czech: 'cs', russian: 'ru', ukrainian: 'uk', turkish: 'tr', greek: 'el', hungarian: 'hu', magyar: 'hu',
+  romanian: 'ro', slovene: 'sl', icelandic: 'is', irish: 'ga', lithuanian: 'lt', bulgarian: 'bg'
+}
+
+/**
+ * The main language the document declares through babel or polyglossia, as a macOS
+ * spell-checker code ("en_GB", "de"), or null when it declares none.
+ */
+export function documentLanguage(text: string): string | null {
+  const end = text.search(/\\begin\s*\{document\}/)
+  const pre = (end === -1 ? text.slice(0, 20000) : text.slice(0, end)).split('\n').map(stripComment).join('\n')
+  const poly = /\\set(?:default|main)language\s*(?:\[[^\]]*\])?\s*\{\s*(\w+)\s*\}/.exec(pre)?.[1]
+  if (poly) return BABEL_LANG[poly.toLowerCase()] ?? null
+  const babel = /\\usepackage\s*\[([^\]]*)\]\s*\{babel\}/.exec(pre)?.[1]
+  if (!babel) return null
+  const options = babel.split(',').map((o) => o.trim())
+  // babel's main language is main=..., otherwise the last language option.
+  const main = options.find((o) => o.startsWith('main='))?.slice(5).trim()
+  const langs = options.filter((o) => !o.includes('=') && o.toLowerCase() in BABEL_LANG)
+  const pick = main ?? langs[langs.length - 1]
+  return pick ? (BABEL_LANG[pick.toLowerCase()] ?? null) : null
+}

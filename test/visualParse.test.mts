@@ -45,7 +45,27 @@ test('inline and display math in all notations', () => {
 
 test('escaped dollars and comments are not math', () => {
   const doc = parseVisual('costs \\$5 and \\$6 % $not math$\n')
-  assert.deepEqual(kinds(doc.nodes), ['symbol', 'symbol'])
+  assert.deepEqual(kinds(doc.nodes), ['symbol', 'symbol', 'comment'])
+})
+
+test('letters: font groups, spacing commands and comments', () => {
+  const body = '% ---- Sender ----\n{\\fontsize{16}{19}\\selectfont\\bfseries Alexander}\\par\\vspace{-4pt}\nStreet 8\\\\\n\\vspace{10pt}\n\\hfill Zurich, \\today\n\\newpage\n'
+  const doc = parseVisual(`\\documentclass[11pt]{article}\n\\begin{document}\n${body}\\end{document}`)
+  const nodes = doc.nodes.filter((n) => n.kind !== 'end')
+  assert.deepEqual(kinds(nodes), ['comment', 'styled', 'layout', 'layout', 'layout', 'layout', 'layout', 'symbol', 'layout'])
+  const styled = nodes[1] as Extract<VNode, { kind: 'styled' }>
+  const text = `\\documentclass[11pt]{article}\n\\begin{document}\n${body}`
+  assert.equal(text.slice(styled.contentFrom, styled.contentTo), 'Alexander')
+  assert.deepEqual(styled.styles, ['bold'])
+  assert.equal(styled.size?.toFixed(2), (16 / 11).toFixed(2))
+  const hfill = nodes.find((n) => n.kind === 'layout' && text.slice(n.from, n.to) === '\\hfill') as Extract<VNode, { kind: 'layout' }>
+  assert.equal(hfill.effect, 'right')
+  assert.equal((nodes[nodes.length - 1] as Extract<VNode, { kind: 'layout' }>).effect, 'pagebreak')
+})
+
+test('plain brace groups and escapes stay text', () => {
+  const doc = parseVisual('A {group} and 5\\,km \\textbar{} B')
+  assert.deepEqual(doc.nodes.map((n) => (n.kind === 'symbol' ? n.text : n.kind)), ['\u2009', '|'])
 })
 
 test('lists number items per level', () => {
