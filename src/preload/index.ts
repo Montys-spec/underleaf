@@ -29,7 +29,7 @@ const api: UnderleafApi = {
   revealInFinder: (p) => ipcRenderer.invoke('fs:reveal', p),
 
   saveSettings: (s) => ipcRenderer.invoke('project:saveSettings', s),
-  compile: (activeFile?: string) => ipcRenderer.invoke('compile:run', activeFile),
+  compile: (activeFile?: string, savePdf?: boolean) => ipcRenderer.invoke('compile:run', activeFile, savePdf),
   stopCompile: () => ipcRenderer.invoke('compile:stop'),
   clearCache: () => ipcRenderer.invoke('compile:clearCache'),
   readPdf: () => ipcRenderer.invoke('compile:readPdf'),

@@ -14,9 +14,11 @@ export interface Prefs {
   styleHints: boolean
   /** Code editor shows plain LaTeX; the visual editor renders it in place. */
   editorMode: 'code' | 'visual'
+  /** Copy each clean build's PDF next to its .tex file. */
+  savePdf: boolean
 }
 
-const DEFAULTS: Prefs = { theme: 'system', fontSize: 13.5, autoCompile: true, spellCheck: true, spellLanguage: 'auto', styleHints: false, editorMode: 'code' }
+const DEFAULTS: Prefs = { theme: 'system', fontSize: 13.5, autoCompile: true, spellCheck: true, spellLanguage: 'auto', styleHints: false, editorMode: 'code', savePdf: true }
 
 let current: Prefs = { ...DEFAULTS, ...load<Partial<Prefs>>('prefs', {}) }
 const listeners = new Set<() => void>()

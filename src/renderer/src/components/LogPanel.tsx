@@ -61,6 +61,8 @@ export function LogPanel({ result, onJump }: { result: CompileResult | null; onJ
         })}
       </ul>
 
+      {result.savedPdf && <div className="log-saved">PDF saved to {result.savedPdf}</div>}
+
       <button className="raw-toggle" onClick={() => setShowRaw((v) => !v)}>
         {showRaw ? 'Hide raw logs' : 'Show raw logs'}
       </button>

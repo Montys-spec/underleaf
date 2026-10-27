@@ -127,6 +127,10 @@ export function PdfPane(props: Props) {
               {menuItem('On', () => setPrefs({ autoCompile: true }), prefs.autoCompile)}
               {menuItem('Off', () => setPrefs({ autoCompile: false }), !prefs.autoCompile)}
               <div className="menu-sep" />
+              <div className="menu-label">Save PDF next to the .tex file</div>
+              {menuItem('On', () => setPrefs({ savePdf: true }), prefs.savePdf)}
+              {menuItem('Off', () => setPrefs({ savePdf: false }), !prefs.savePdf)}
+              <div className="menu-sep" />
               <div className="menu-label">Compiler</div>
               {(Object.keys(COMPILER_LABEL) as Compiler[]).map((c) => (
                 <div key={c}>{menuItem(COMPILER_LABEL[c], () => props.onSetCompiler(c), props.compiler === c)}</div>

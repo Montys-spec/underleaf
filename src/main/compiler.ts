@@ -19,7 +19,7 @@ export class CompileRunner {
   private child?: ChildProcess
   private cancelled = false
 
-  async compile(project: Project, activeFile?: string): Promise<CompileResult> {
+  async compile(project: Project, activeFile?: string, savePdf = false): Promise<CompileResult> {
     this.stop()
     this.cancelled = false
     const started = Date.now()
@@ -86,8 +86,21 @@ export class CompileRunner {
       .catch(() => false)
 
     const hasErrors = entries.some((e) => e.level === 'error')
+    const status = this.cancelled ? 'cancelled' : exitCode === 0 && !hasErrors ? 'success' : 'failure'
+    // Keep a copy beside the source, like a normal LaTeX setup. Only clean builds overwrite it,
+    // so a broken compile never replaces the last good PDF.
+    let savedPdf: string | undefined
+    if (savePdf && hasPdf && status === 'success') {
+      const target = path.join(path.dirname(mainAbs), `${jobname}.pdf`)
+      try {
+        await fs.copyFile(pdfPath, target)
+        savedPdf = project.relative(target)
+      } catch (err) {
+        entries.push({ level: 'warning', message: `Could not save the PDF next to ${mainFile}: ${(err as Error).message}` })
+      }
+    }
     return {
-      status: this.cancelled ? 'cancelled' : exitCode === 0 && !hasErrors ? 'success' : 'failure',
+      status,
       hasPdf,
       pdfPath: hasPdf ? pdfPath : undefined,
       entries,
@@ -95,7 +108,8 @@ export class CompileRunner {
       output,
       durationMs: Date.now() - started,
       mainFile,
-      compiler
+      compiler,
+      savedPdf
     }
   }
 

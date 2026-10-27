@@ -244,8 +244,8 @@ function registerIpc(): void {
     return added
   })
 
-  ipcMain.handle('compile:run', async (_e, activeFile?: string) => {
-    const res = await runner.compile(requireProject(), activeFile)
+  ipcMain.handle('compile:run', async (_e, activeFile?: string, savePdf?: boolean) => {
+    const res = await runner.compile(requireProject(), activeFile, savePdf)
     if (res.status !== 'cancelled') builtFile = res.mainFile
     return res
   })

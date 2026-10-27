@@ -54,6 +54,8 @@ export interface CompileResult {
   mainFile: string
   /** The engine used, after `% !TEX program` and package checks. */
   compiler: Compiler
+  /** Where the PDF was copied next to its source, relative to the project root. */
+  savedPdf?: string
 }
 
 export interface SyncTexBox {
@@ -192,7 +194,7 @@ export interface UnderleafApi {
 
   saveSettings(settings: ProjectSettings): Promise<ProjectSettings>
   /** Builds `activeFile` if it is a complete document (or names its root), else the main file. */
-  compile(activeFile?: string): Promise<CompileResult>
+  compile(activeFile?: string, savePdf?: boolean): Promise<CompileResult>
   stopCompile(): Promise<void>
   /** Deletes the build folder so the next compile starts from scratch. */
   clearCache(): Promise<void>

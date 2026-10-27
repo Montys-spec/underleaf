@@ -265,7 +265,7 @@ export function Workspace({ initial, onLeave }: Props) {
     setCompiling(true)
     try {
       await saveAll()
-      const res = await api.compile(activeRef.current ?? undefined)
+      const res = await api.compile(activeRef.current ?? undefined, getPrefs().savePdf)
       resultRef.current = res
       setResult(res)
       manager.applyCompileDiagnostics(res.entries)
