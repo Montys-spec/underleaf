@@ -2,6 +2,7 @@ import { spawn, type ChildProcess } from 'node:child_process'
 import { promises as fs } from 'node:fs'
 import path from 'node:path'
 import { latexmkEntries, parseLatexLog } from '@shared/logParser'
+import { compileHints } from '@shared/texScan'
 import type { CompileResult, Compiler } from '@shared/types'
 import type { Project } from './project'
 import { TOOL_ENV } from './tools'
@@ -18,11 +19,11 @@ export class CompileRunner {
   private child?: ChildProcess
   private cancelled = false
 
-  async compile(project: Project): Promise<CompileResult> {
+  async compile(project: Project, activeFile?: string): Promise<CompileResult> {
     this.stop()
     this.cancelled = false
     const started = Date.now()
-    const { mainFile, compiler } = project.settings
+    const { mainFile, compiler } = await resolveTarget(project, activeFile)
     const mainAbs = project.resolve(mainFile)
     const jobname = path.basename(mainFile, path.extname(mainFile))
     const outDir = project.buildDir
@@ -32,7 +33,7 @@ export class CompileRunner {
     try {
       await fs.access(mainAbs)
     } catch {
-      return failure(started, `Main file "${mainFile}" does not exist. Choose another one in Project settings.`)
+      return failure(started, mainFile, compiler, `Main file "${mainFile}" does not exist. Choose another one in Project settings.`)
     }
 
     await fs.mkdir(outDir, { recursive: true })
@@ -92,7 +93,9 @@ export class CompileRunner {
       entries,
       rawLog,
       output,
-      durationMs: Date.now() - started
+      durationMs: Date.now() - started,
+      mainFile,
+      compiler
     }
   }
 
@@ -117,13 +120,38 @@ async function mirrorDirectories(project: Project, srcDir: string, outDir: strin
   if (srcDir.startsWith(project.root)) await walk(srcDir)
 }
 
-function failure(started: number, message: string): CompileResult {
+/**
+ * Which document to build, and with which engine. A project folder can hold several complete
+ * documents (a CV and a cover letter per application), so the open file is compiled when it is
+ * one, or when it names its root with `% !TEX root`. Otherwise the project's main file is used.
+ * `% !TEX program`, or packages such as fontspec that only work with XeLaTeX or LuaLaTeX,
+ * override the project's engine.
+ */
+export async function resolveTarget(project: Project, activeFile?: string): Promise<{ mainFile: string; compiler: Compiler }> {
+  const read = (rel: string) => fs.readFile(project.resolve(rel), 'utf8').then(compileHints, () => null)
+  let mainFile = project.settings.mainFile
+  if (activeFile?.endsWith('.tex')) {
+    const hints = await read(activeFile)
+    if (hints?.root) {
+      const root = project.relative(path.resolve(path.dirname(project.resolve(activeFile)), hints.root))
+      if (!root.startsWith('..')) mainFile = root
+    } else if (hints?.standalone) mainFile = activeFile
+  }
+  const hints = await read(mainFile)
+  const fallback = project.settings.compiler
+  const compiler = hints?.engine ?? (hints?.needsUnicodeEngine && fallback === 'pdflatex' ? 'xelatex' : fallback)
+  return { mainFile, compiler }
+}
+
+function failure(started: number, mainFile: string, compiler: Compiler, message: string): CompileResult {
   return {
     status: 'failure',
     hasPdf: false,
     entries: [{ level: 'error', message }],
     rawLog: '',
     output: message,
-    durationMs: Date.now() - started
+    durationMs: Date.now() - started,
+    mainFile,
+    compiler
   }
 }

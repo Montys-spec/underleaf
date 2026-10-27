@@ -117,3 +117,28 @@ function field(body: string, name: string): string | undefined {
   else value = /^[^,}\n]*/.exec(body.slice(start))![0]
   return value.replace(/[{}]/g, '').replace(/\s+/g, ' ').trim() || undefined
 }
+
+export interface CompileHints {
+  /** `% !TEX root = ...` as written, relative to the file's folder. */
+  root?: string
+  /** `% !TEX program = ...` */
+  engine?: 'pdflatex' | 'xelatex' | 'lualatex'
+  /** Loads fontspec, unicode-math or polyglossia, which pdfLaTeX cannot run. */
+  needsUnicodeEngine?: boolean
+  /** True when the file is a complete document (it has \documentclass). */
+  standalone: boolean
+}
+
+/** Reads how a .tex file wants to be compiled: magic comments, its own \documentclass, engine-only packages. */
+export function compileHints(text: string): CompileHints {
+  const head = text.slice(0, 20000)
+  const hints: CompileHints = { standalone: false }
+  const root = /^\s*%\s*!\s*TEX\s+root\s*=\s*(.+?)\s*$/im.exec(head)?.[1]
+  if (root) hints.root = root
+  const program = /^\s*%\s*!\s*TEX\s+(?:TS-)?program\s*=\s*(\w+)/im.exec(head)?.[1].toLowerCase()
+  if (program === 'pdflatex' || program === 'xelatex' || program === 'lualatex') hints.engine = program
+  const code = head.split('\n').map(stripComment).join('\n')
+  hints.standalone = /\\documentclass\b/.test(code)
+  if (/\\usepackage\s*(?:\[[^\]]*\])?\s*\{[^}]*\b(?:fontspec|unicode-math|polyglossia)\b/.test(code)) hints.needsUnicodeEngine = true
+  return hints
+}

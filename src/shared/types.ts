@@ -50,6 +50,10 @@ export interface CompileResult {
   /** Output of latexmk itself (stdout + stderr). */
   output: string
   durationMs: number
+  /** The document that was built: the open file when it is a complete document, else the main file. */
+  mainFile: string
+  /** The engine used, after `% !TEX program` and package checks. */
+  compiler: Compiler
 }
 
 export interface SyncTexBox {
@@ -187,7 +191,8 @@ export interface UnderleafApi {
   revealInFinder(path: string): Promise<void>
 
   saveSettings(settings: ProjectSettings): Promise<ProjectSettings>
-  compile(): Promise<CompileResult>
+  /** Builds `activeFile` if it is a complete document (or names its root), else the main file. */
+  compile(activeFile?: string): Promise<CompileResult>
   stopCompile(): Promise<void>
   /** Deletes the build folder so the next compile starts from scratch. */
   clearCache(): Promise<void>

@@ -1,7 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { blockExclusions, proseWords } from '../src/shared/spellScan.ts'
-import { findLabels, findOutline, parseBibEntries, plainTitle } from '../src/shared/texScan.ts'
+import { compileHints, findLabels, findOutline, parseBibEntries, plainTitle } from '../src/shared/texScan.ts'
 
 const words = (line: string) => proseWords(line).map(([s, e]) => line.slice(s, e))
 
@@ -45,4 +45,12 @@ test('labels and bibliography entries are extracted', () => {
     { key: 'knuth1984', type: 'book', title: 'The \\TeXbook', author: 'Donald E. Knuth', year: '1984' },
     { key: 'doe', type: 'article', title: 'Quoted', author: undefined, year: '2020' }
   ])
+})
+
+test('compile hints read magic comments, standalone documents and engine-only packages', () => {
+  assert.deepEqual(compileHints('% !TEX program = xelatex\n\\documentclass{article}'), { engine: 'xelatex', standalone: true })
+  assert.deepEqual(compileHints('% !TEX root = ../main.tex\n\\section{Intro}'), { root: '../main.tex', standalone: false })
+  assert.deepEqual(compileHints('\\documentclass{article}\n\\usepackage[ngerman]{babel}\n\\usepackage{fontspec}'), { needsUnicodeEngine: true, standalone: true })
+  assert.deepEqual(compileHints('% \\documentclass{article}\n% \\usepackage{fontspec}\nText'), { standalone: false })
+  assert.deepEqual(compileHints('%!TeX TS-program = LuaLaTeX\n\\documentclass{article}\n\\usepackage{fontspec}'), { engine: 'lualatex', needsUnicodeEngine: true, standalone: true })
 })

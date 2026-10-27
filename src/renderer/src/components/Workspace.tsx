@@ -265,7 +265,7 @@ export function Workspace({ initial, onLeave }: Props) {
     setCompiling(true)
     try {
       await saveAll()
-      const res = await api.compile()
+      const res = await api.compile(activeRef.current ?? undefined)
       resultRef.current = res
       setResult(res)
       manager.applyCompileDiagnostics(res.entries)
@@ -832,7 +832,7 @@ export function Workspace({ initial, onLeave }: Props) {
         </div>
         <div className="titlebar-right">
           <span className="titlebar-meta">
-            {info.settings.mainFile} · {{ pdflatex: 'pdfLaTeX', xelatex: 'XeLaTeX', lualatex: 'LuaLaTeX' }[info.settings.compiler]}
+            {result?.mainFile ?? info.settings.mainFile} · {{ pdflatex: 'pdfLaTeX', xelatex: 'XeLaTeX', lualatex: 'LuaLaTeX' }[result?.compiler ?? info.settings.compiler]}
           </span>
         </div>
       </header>

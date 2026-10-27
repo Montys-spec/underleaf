@@ -57,6 +57,7 @@ async function addRecent(p: Project): Promise<void> {
 async function openProject(root: string): Promise<ProjectInfo> {
   project?.close()
   runner.stop()
+  builtFile = undefined
   texlab.stop()
   const p = new Project(root)
   await p.load()
@@ -68,8 +69,12 @@ async function openProject(root: string): Promise<ProjectInfo> {
   return p.info()
 }
 
+/** The document the last compile built; the preview, SyncTeX and export use its PDF. */
+let builtFile: string | undefined
+
 function pdfPath(p: Project): string {
-  const job = path.basename(p.settings.mainFile, path.extname(p.settings.mainFile))
+  const file = builtFile ?? p.settings.mainFile
+  const job = path.basename(file, path.extname(file))
   return path.join(p.buildDir, `${job}.pdf`)
 }
 
@@ -239,7 +244,11 @@ function registerIpc(): void {
     return added
   })
 
-  ipcMain.handle('compile:run', () => runner.compile(requireProject()))
+  ipcMain.handle('compile:run', async (_e, activeFile?: string) => {
+    const res = await runner.compile(requireProject(), activeFile)
+    if (res.status !== 'cancelled') builtFile = res.mainFile
+    return res
+  })
   ipcMain.handle('compile:stop', () => runner.stop())
   ipcMain.handle('compile:clearCache', async () => {
     runner.stop()
